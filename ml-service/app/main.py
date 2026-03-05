@@ -2,6 +2,7 @@ import os
 import logging
 import httpx
 import asyncio
+import cv2
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks, Request
 from telegram import Update
@@ -56,23 +57,39 @@ async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYP
 
     try:
         await update.message.reply_text('Performing OCR on the image...')
-        raw_text = await ocr_image(file_path)
+        ocr_result = await ocr_image(file_path)
 
-        if not raw_text:
+        if not ocr_result.boxes:
             await update.message.reply_text('Sorry, the OCR process failed. Please try again with a clearer image.')
         else:
             await update.message.reply_text("Refining extracted data...")
             # asyncio.create_task(update.message.reply_text(f"OCR Result:\n{raw_text}"))
             
-            await background_refine(update, raw_text, file_path)
+            await background_refine(update, ocr_result, file_path)
     
     except Exception as e:
         logger.error(f"Error processing receipt image: {e}")
         await update.message.reply_text('Sorry, an error occurred while processing your receipt image.')
 
     
-async def background_refine(update, raw_text, file_path):
-    refined_data = await refine_receipt(raw_text)
+async def background_refine(update, ocr_result, file_path):
+    img = cv2.imread(file_path)
+    img_height = img.shape[0] if img is not None else 0
+    ocr_boxes=[
+        {
+            "text": b.text, 
+            "confidence": b.confidence, 
+            "x": b.x, 
+            "y": b.y
+        }
+        for b in ocr_result.boxes
+    ]
+    
+    refined_data = await refine_receipt(
+        raw_text=ocr_result.raw_text,
+        ocr_boxes=ocr_boxes,
+        img_height=img_height
+    )
 
     if not refined_data:
         await update.message.reply_text('Sorry, I could not refine the receipt data. Please try again.')
@@ -158,6 +175,12 @@ async def background_refine(update, raw_text, file_path):
         price = item.get("price", 0)
         total = item.get("total_price", 0)
         item_list += f"• {name} x{qty} @{price:,} - Rp {total:,}\n"
+
+    status_emoji = {
+        "VERIFIED":        "✅",
+        "PENDING":         "⏳",
+        "ACTION_REQUIRED": "⚠️",
+    }.get(status, "❓")
         
     # try:
     #     clean_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d %b %Y")
@@ -172,7 +195,17 @@ async def background_refine(update, raw_text, file_path):
             f"{item_list}"
             f"───────────────\n"
             f"💰 *TOTAL AMOUNT:* *Rp {total_amount:,}*\n"
+            f"📊 *STATUS:* {status_emoji} {status}\n"
         )
+    
+    if low_confidence_fields:
+        flagged = ", ".join(
+            f["field"] for f in low_confidence_fields
+            if f.get("status") == "ACTION_REQUIRED"
+        )
+
+        if flagged:
+            caption += f"⚠️ *Needs review:* {flagged}\n"
 
     try:
         await update.message.reply_text(caption, parse_mode='Markdown')
@@ -204,21 +237,21 @@ async def lifespan(app: FastAPI):
     await ocr_app.initialize()
     await ocr_app.start()
     
-    if WEBHOOK_URL:
-        await ocr_app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook", allowed_updates=["message"])
-        logger.info(f"Webhook set to: {WEBHOOK_URL}")
-    else:
-        logger.warning("WEBHOOK_SECRET not set. Webhook will not be registered.")
+    # if WEBHOOK_URL:
+    #     await ocr_app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook", allowed_updates=["message"])
+    #     logger.info(f"Webhook set to: {WEBHOOK_URL}")
+    # else:
+    #     logger.warning("WEBHOOK_SECRET not set. Webhook will not be registered.")
 
-    # await ocr_app.updater.start_polling()
+    await ocr_app.updater.start_polling()
     # await ocr_app.run_polling()
     
     app.state.ocr_app = ocr_app
     logger.info("Telegram bot started.")
 
     yield
-    await ocr_app.bot.delete_webhook()
-    # await ocr_app.updater.stop()
+    # await ocr_app.bot.delete_webhook()
+    await ocr_app.updater.stop()
     await ocr_app.stop()
     await ocr_app.shutdown()
 
@@ -228,13 +261,13 @@ app = FastAPI(lifespan=lifespan)
 async def root():
     return {"message": "OCR Telegram Bot is running."}
 
-@app.post("/webhook")
-async def webhook(request: Request, background_tasks: BackgroundTasks):
-    ocr_app = request.app.state.ocr_app
-    data = await request.json()
-    update = Update.de_json(data, ocr_app.bot)
-    background_tasks.add_task(ocr_app.process_update, update)
-    return {"ok": True}
+# @app.post("/webhook")
+# async def webhook(request: Request, background_tasks: BackgroundTasks):
+#     ocr_app = request.app.state.ocr_app
+#     data = await request.json()
+#     update = Update.de_json(data, ocr_app.bot)
+#     background_tasks.add_task(ocr_app.process_update, update)
+#     return {"ok": True}
 
 # we'll use below when requests coming from backend
 # @app.post("/process-receipt")
