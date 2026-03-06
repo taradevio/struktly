@@ -246,7 +246,7 @@ def _parse_ocr_result(result) -> list[OCRBox]:
 #         logger.error(f"OCR failed for image {image_path}: {e}")
 #         return ""
 
-def reconstruct_lines(boxes: list[OCRBox], y_tolerance: int = 15) -> str:
+def reconstruct_lines(boxes: list[OCRBox], y_tolerance: int = 24) -> str:
     """
     Group OCRBoxes yang ada di baris yang sama (y proximity),
     sort per baris by x, join jadi lines.
@@ -343,7 +343,7 @@ async def ocr_image(image_path: str) -> OCRResult:
                 return OCRResult(boxes=[], raw_text="")
 
             # raw_text for backward compat with your existing LLM prompt
-            raw_text = reconstruct_lines(boxes, y_tolerance=15)
+            raw_text = reconstruct_lines(boxes, y_tolerance=24)
             print("Reconstructed lines:")
             print(raw_text)
             logger.info(

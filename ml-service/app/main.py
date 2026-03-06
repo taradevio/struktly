@@ -73,8 +73,8 @@ async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYP
 
     
 async def background_refine(update, ocr_result, file_path):
-    img = cv2.imread(file_path)
-    img_height = img.shape[0] if img is not None else 0
+    # img = cv2.imread(file_path)
+    # img_height = img.shape[0] if img is not None else 0
     ocr_boxes=[
         {
             "text": b.text, 
@@ -88,7 +88,7 @@ async def background_refine(update, ocr_result, file_path):
     refined_data = await refine_receipt(
         raw_text=ocr_result.raw_text,
         ocr_boxes=ocr_boxes,
-        img_height=img_height
+        # img_height=img_height
     )
 
     if not refined_data:

@@ -279,6 +279,7 @@ import json
 import logging
 import uuid
 import os
+import re
 from ollama import AsyncClient
 
 logger = logging.getLogger(__name__)
@@ -309,7 +310,7 @@ FIELD_THRESHOLDS = {
 
 PENDING_MARGIN = 0.10  # conf >= threshold - margin → PENDING
 
-def reconstruct_lines(boxes: list[dict], y_tolerance: int = 15) -> str:
+def reconstruct_lines(boxes: list[dict], y_tolerance: int = 24) -> str:
     """Dict version of reconstruct_lines — works with {"text", "x", "y"} dicts."""
     if not boxes:
         return ""
@@ -337,16 +338,54 @@ def reconstruct_lines(boxes: list[dict], y_tolerance: int = 15) -> str:
 
     return "\n".join(lines)
 
-def build_llm_input(ocr_boxes: list, img_height: float) -> str:
+def find_zone_boundaries(boxes: list[dict]) -> tuple[float, float]:
+    """
+    Detect item zone start/end by looking for landmark keywords
+    instead of fixed percentages.
+    """
+    item_start_y = None
+    footer_start_y = None
+    
+    ITEM_LANDMARKS = {"total", "belanja", "tunai", "jumlah", "pcs", "harga"}
+    FOOTER_LANDMARKS = {"terima", "kasih", "layanan", "konsumen", "telp", "sms", "klikin"}
+    
+    sorted_boxes = sorted(boxes, key=lambda b: b["y"])
+    
+    for box in sorted_boxes:
+        text_lower = box["text"].lower()
+        
+        # First box that looks like a transaction line or item
+        if item_start_y is None:
+            if any(kw in text_lower for kw in ITEM_LANDMARKS) or \
+               bool(__import__('re').search(r'\d{2}[./]\d{2}[./]\d{2,4}', box["text"])):
+                item_start_y = box["y"]
+        
+        # First footer landmark
+        if footer_start_y is None:
+            if any(kw in text_lower for kw in FOOTER_LANDMARKS):
+                footer_start_y = box["y"]
+    
+    # Fallback to percentage if landmarks not found
+    max_y = max(b["y"] for b in boxes) if boxes else 1000
+    return (
+        item_start_y or max_y * 0.30,
+        footer_start_y or max_y * 0.75
+    )
+
+def merge_spaced_numbers(text: str) -> str:
+    """
+    "3 500" → "3500", "7 000" → "7000"
+    Catches warung-style spaced thousands separators.
+    Pattern: 1-2 digits, space, exactly 3 digits (not followed by more digits)
+    """
+    return re.sub(r'(\d{1,2})\s+(\d{3})(?!\d)', r'\1\2', text)
+
+def build_llm_input(ocr_boxes: list) -> str:
     """
     Zone-filter + reconstruct lines specifically for LLM consumption.
     Skip header noise, skip low-confidence boxes, skip footer.
     """
     # from app.services.ocr_services import OCRBox, reconstruct_lines
-
-    item_zone_start = img_height * 0.30
-    footer_zone_start = img_height * 0.75
-
     filtered = [
         b for b in ocr_boxes
         if b["confidence"] >= 0.7
@@ -354,12 +393,15 @@ def build_llm_input(ocr_boxes: list, img_height: float) -> str:
         and b["text"].strip() not in {"..", ".", ",", "V"}
     ]
 
+    item_zone_start, footer_zone_start = find_zone_boundaries(filtered)
+
+
     # Split into zones
     header_boxes = [b for b in filtered if b["y"] < item_zone_start]
     body_boxes   = [b for b in filtered if item_zone_start <= b["y"] < footer_zone_start]
     
-    header_text = reconstruct_lines(header_boxes)
-    body_text   = reconstruct_lines(body_boxes)
+    header_text = merge_spaced_numbers(reconstruct_lines(header_boxes))
+    body_text   = merge_spaced_numbers(reconstruct_lines(body_boxes))
 
     return f"=== HEADER ===\n{header_text}\n\n=== ITEMS & TOTALS ===\n{body_text}"
 
@@ -566,6 +608,54 @@ def classify_field_status(confidence: float, field_name: str) -> str:
         return "ACTION_REQUIRED"
 
 
+def arithmetic_cross_check(response_data: dict) -> list[dict]:
+    """
+    Verify LLM math is internally consistent.
+    Catches cases where OCR confidence matching passes but numbers are wrong.
+    """
+    issues = []
+    items = response_data.get("items", [])
+    
+    if not items:
+        return issues
+    
+    # 1. Per-item: qty * price == total_price?
+    for i, item in enumerate(items):
+        qty   = item.get("qty", {}).get("value", 0) or 0
+        price = item.get("price", {}).get("value", 0) or 0
+        total = item.get("total_price", {}).get("value", 0) or 0
+        disc  = item.get("discount_value", {}).get("value", 0) or 0
+        vouc  = item.get("voucher_amount", {}).get("value", 0) or 0
+        
+        expected = (qty * price) - disc - vouc
+        
+        if total > 0 and expected > 0 and abs(expected - total) > 10:  # 10 rupiah tolerance
+            issues.append({
+                "field": f"items[{i}].total_price",
+                "status": "ACTION_REQUIRED",
+                "reason": f"qty*price={expected} != total_price={total}",
+                "confidence": 0.0,
+                "value": total
+            })
+    
+    # 2. sum(item totals) == total_amount?
+    declared_total = response_data.get("total_amount", {}).get("value", 0) or 0
+    sum_items = sum(
+        (item.get("total_price", {}).get("value", 0) or 0)
+        for item in items
+    )
+    
+    if declared_total > 0 and sum_items > 0 and abs(declared_total - sum_items) > 10:
+        issues.append({
+            "field": "total_amount",
+            "status": "ACTION_REQUIRED", 
+            "reason": f"sum(items)={sum_items} != total_amount={declared_total}",
+            "confidence": 0.0,
+            "value": declared_total
+        })
+    
+    return issues
+
 def determine_receipt_status(response_data: dict, ocr_boxes: list) -> dict:
     """
     Classify each field using REAL RapidOCR confidence scores,
@@ -635,6 +725,9 @@ def determine_receipt_status(response_data: dict, ocr_boxes: list) -> dict:
             "value": [],
             "reason": "No items extracted by LLM"
         })
+    
+    arithmetic_issues = arithmetic_cross_check(response_data)
+    low_confidence_fields.extend(arithmetic_issues)
 
     # ── Overall receipt status (weighted by field risk) ────────────────────────
     high_risk_failed = any(
@@ -660,7 +753,7 @@ def determine_receipt_status(response_data: dict, ocr_boxes: list) -> dict:
 
 
 # ── Main LLM function ──────────────────────────────────────────────────────────
-async def refine_receipt(raw_text: str, ocr_boxes: list = None, img_height: float = 0):
+async def refine_receipt(raw_text: str, ocr_boxes: list = None):
     """
     ocr_boxes: list of {"text": str, "confidence": float, "x": float, "y": float}
                from OCRResult.boxes — used for real confidence scoring
@@ -687,8 +780,8 @@ async def refine_receipt(raw_text: str, ocr_boxes: list = None, img_height: floa
     #     # Fallback to raw text if boxes not provided
     #     input_section = f"DATA OCR:\n{raw_text}"
 
-    if ocr_boxes and img_height:
-        input_section = build_llm_input(ocr_boxes, img_height)  # use this instead
+    if ocr_boxes:
+        input_section = build_llm_input(ocr_boxes)  # use this instead
     elif ocr_boxes:
         # fallback: no zone filtering, but still clean text format
         input_section = f"DATA OCR:\n{raw_text}"
@@ -704,11 +797,21 @@ async def refine_receipt(raw_text: str, ocr_boxes: list = None, img_height: floa
     {category_examples}
 
     INSTRUKSI KHUSUS:
-    1. MERCHANT_NAME: Ambil dari baris yang menyatakan nama toko atau nama brand
+    1. MERCHANT_NAME:
+        TIER 1 — Known brands (LLM normalize dari training knowledge):
+            - Cari nama brand nasional/retail chain yang kamu kenal
+            - Normalize OCR noise: "Indesmaret" → "INDOMARET", "ALFMRT" → "ALFAMART"
+            - Contoh brands: INDOMARET, ALFAMART, HYPERMART, LAWSON, CIRCLE K, GIANT, HERO, CARREFOUR, TRANSMART, LOTTE MART, YOGYA, dll
+
+        TIER 2 — Unknown/local stores:
+            - Ambil apa adanya dari OCR, jangan guess atau normalize
+            - Gunakan teks paling prominent di area header
+            - Jika OCR noise (confidence rendah, karakter aneh), ambil dari footer context
+            - JANGAN fabricate nama yang tidak ada di OCR
     2. CURRENCY: Hapus semua titik/koma pemisah ribuan. Pastikan total_amount adalah INTEGER.
     3. TOTAL_AMOUNT: 
         - Setelah extract semua items, hitung manual: sum(qty * price per item)
-        - Bandingkan dengan nilai setelah kata "TOTAL" atau "T O T A L"
+        - Bandingkan dengan nilai setelah kata "TOTAL", "T O T A L" atau "Total Belanja"
         - Jika TOTAL yang tertulis ≠ sum items → gunakan sum items sebagai total_amount
         - JUMLAH UANG = uang yang dibayar (bukan total belanja)
         - KEMBALI = JUMLAH UANG - TOTAL (kembalian)
@@ -716,6 +819,8 @@ async def refine_receipt(raw_text: str, ocr_boxes: list = None, img_height: floa
         
     4. DATE & TIME:
         - Format input: DD/MM/YYYY atau DD-MM-YYYY (Indonesia: hari/bulan/tahun)
+        - Posisi tanggal: Footer atau header
+        - Penulisan biasanya: Tgl atau date
         - Konversi ke YYYY-MM-DD (ISO 8601)
         - TIME: format HH:MM
         - Jika tidak ditemukan, gunakan null
@@ -728,16 +833,18 @@ async def refine_receipt(raw_text: str, ocr_boxes: list = None, img_height: floa
         Format B (Warung/kasir style):
             NAMA PRODUK QTYpcs x HARGA = TOTAL
             Contoh: "RINSO ANTINODA\n1PCSx 24.000= 24.000" → name="RINSO ANTINODA", qty=1, price=24000, total=24000
-        Angka di nama produk bukan harga (ukuran/volume: 130ml, 600ml, 700g).
+        - Angka di nama produk bukan harga (ukuran/volume: 130ml, 600ml, 700g).
+        - Struk warung sering memisahkan ribuan dengan spasi: "3 500" = 3.500 = 3500
+        - "7 000" = 7.000 = 7000
+        - Jika ada pola "digit spasi 3digit" → gabungkan sebagai satu angka
+        - Contoh: "2PCSx 3 500 7 000" → qty=2, price=3500, total=7000
 
     6. DISCOUNT EXTRACTION:
         a. Per item: cari "Diskon", "Disc", "Voucher" di bawah item
         b. Summary: distribusikan proporsional ke semua item
         c. Tidak ada diskon: discount_type: null, discount_value: 0, voucher_amount: 0
-        d. total_price = (qty * price) - discount_amount - voucher_amount
-
-    PENTING: Jangan sertakan confidence score dalam output.
-    Fokus hanya pada ekstraksi nilai yang akurat.
+        d. total_price = (qty * price) - discount_amount - voucher_amount. Contoh: price=31000, qty=1,discount=6100, voucher=2000 → total_price = (1 × 31000) - 6100 - 2000 = 22900
+        JANGAN gunakan angka total dari struk langsung jika ada diskon.
 
     FORMAT JSON:
     {{
@@ -767,13 +874,13 @@ async def refine_receipt(raw_text: str, ocr_boxes: list = None, img_height: floa
         logger.info(f"Sending to LLM for receipt: {receipt_id}")
 
         response = await custom_client.generate(
-            model="gpt-oss:120b-cloud",
+            model="gpt-oss:20b-cloud",
             prompt=prompt,
             format="json",
             options={
-                "temperature": 0.1,
+                "temperature": 0.2,
                 "top_k": 20,
-                "top_p": 0.6,
+                "top_p": 0.5,
             }
         )
 
@@ -787,6 +894,7 @@ async def refine_receipt(raw_text: str, ocr_boxes: list = None, img_height: floa
 
             logger.info(f"Receipt {receipt_id} status: {scoring['status']}")
             print(response_data)
+            print(f"input section {input_section}")
 
             return {
                 "receipt_data": response_data,
