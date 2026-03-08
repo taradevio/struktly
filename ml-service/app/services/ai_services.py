@@ -310,8 +310,53 @@ FIELD_THRESHOLDS = {
 
 PENDING_MARGIN = 0.10  # conf >= threshold - margin → PENDING
 
-def reconstruct_lines(boxes: list[dict], y_tolerance: int = 24) -> str:
-    """Dict version of reconstruct_lines — works with {"text", "x", "y"} dicts."""
+# def reconstruct_lines(boxes: list[dict], y_tolerance: int = 25) -> str:
+#     """Dict version of reconstruct_lines — works with {"text", "x", "y"} dicts."""
+#     if not boxes:
+#         return ""
+
+#     lines = []
+#     used = set()
+#     sorted_boxes = sorted(boxes, key=lambda b: b["y"])
+
+#     for i, box in enumerate(sorted_boxes):
+#         if i in used:
+#             continue
+
+#         line_boxes = [box]
+#         used.add(i)
+
+#         for j, other in enumerate(sorted_boxes):
+#             if j in used:
+#                 continue
+#             if abs(box["y"] - other["y"]) <= y_tolerance:
+#                 line_boxes.append(other)
+#                 used.add(j)
+
+#         line_boxes.sort(key=lambda b: b["x"])
+#         lines.append(" ".join(b["text"] for b in line_boxes))
+
+#     return "\n".join(lines)
+
+def get_dynamic_tolerance(boxes: list[dict]) -> int:
+    if len(boxes) < 2:
+        return 15
+    
+    heights = [b["height"] for b in boxes if b.get("height", 0) > 5]
+    if not heights:
+        return 15
+    
+    median_height = sorted(heights)[len(heights) // 2]
+    return int(median_height * 0.6)
+
+def reconstruct_lines(boxes: list[dict], y_tolerance: int = None) -> str:
+
+    if y_tolerance is None:
+        y_tolerance = get_dynamic_tolerance(boxes)
+
+    print(f"DEBUG y_tolerance: {y_tolerance}")
+    print(f"DEBUG sample heights: {[b.get('height', 0) for b in boxes[:10]]}")
+
     if not boxes:
         return ""
 
@@ -320,56 +365,131 @@ def reconstruct_lines(boxes: list[dict], y_tolerance: int = 24) -> str:
     sorted_boxes = sorted(boxes, key=lambda b: b["y"])
 
     for i, box in enumerate(sorted_boxes):
+        print(f"BOX {i}: '{box['text']}' cy={box['y'] + box.get('height', 20)/2:.1f}")
+
+    for i, box in enumerate(sorted_boxes):
         if i in used:
             continue
 
         line_boxes = [box]
         used.add(i)
 
+        box_top = box["y"]
+        box_bottom = box["y"] + box.get("height", 20)
+
         for j, other in enumerate(sorted_boxes):
             if j in used:
                 continue
-            if abs(box["y"] - other["y"]) <= y_tolerance:
+            # box_center_y = box["y"] + box.get("height", 20) / 2
+            # other_center_y = other["y"] + other.get("height", 20) / 2
+            # if abs(box_center_y - other_center_y) <= y_tolerance:
+            #     line_boxes.append(other)
+            #     used.add(j)
+
+            other_top = other["y"]
+            other_bottom = other["y"] + other.get("height", 20)
+            
+            # Cek vertical overlap — dua box dianggap satu baris kalau area-nya overlap
+            overlap = min(box_bottom, other_bottom) - max(box_top, other_top)
+            min_height = min(box_bottom - box_top, other_bottom - other_top)
+            
+            # Overlap > 40% dari box terkecil = satu baris
+            if min_height > 0 and overlap / min_height > 0.3:
                 line_boxes.append(other)
                 used.add(j)
-
+        
+        # ← Detect gap antar kolom, insert tab sebagai separator
+        parts = []
+        # Sort by x
         line_boxes.sort(key=lambda b: b["x"])
-        lines.append(" ".join(b["text"] for b in line_boxes))
+        for k, lb in enumerate(line_boxes):
+            if k == 0:
+                parts.append(lb["text"])
+                continue
+            prev = line_boxes[k - 1]
+            gap = lb["x"] - (prev["x"] + prev.get("width", 50))
+            print(f"DEBUG gap: '{prev['text']}' → '{lb['text']}' = {gap}px")
+            # Gap > 40px = kolom berbeda → pakai tab biar LLM ngerti ini terpisah
+            if gap > 40:
+                parts.append("  |  " + lb["text"])
+            else:
+                parts.append(" " + lb["text"])
+        
+        lines.append("".join(parts))
 
     return "\n".join(lines)
 
+# def find_zone_boundaries(boxes: list[dict]) -> tuple[float, float]:
+#     """
+#     Detect item zone start/end by looking for landmark keywords
+#     instead of fixed percentages.
+#     """
+#     item_start_y = None
+#     footer_start_y = None
+    
+#     DATE_PATTERN = re.compile(r'\d{2}[./]\d{2}[./]\d{2,4}')
+    
+#     # Total keywords = akhir item zone
+#     TOTAL_LANDMARKS = {"total", "tunai", "jumlah uang", "kembali"}
+    
+#     # Footer = setelah payment summary
+#     FOOTER_LANDMARKS = {"terima", "kasih", "layanan", "konsumen", "telp", "sms", "klikin", "kontak"}
+    
+#     sorted_boxes = sorted(boxes, key=lambda b: b["y"])
+    
+#     for box in sorted_boxes:
+#         text_lower = box["text"].lower()
+        
+#         # First box that looks like a transaction line or item
+#         if item_start_y is None:
+#             if any(kw in text_lower for kw in ITEM_LANDMARKS) or \
+#                bool(__import__('re').search(r'\d{2}[./]\d{2}[./]\d{2,4}', box["text"])):
+#                 item_start_y = box["y"]
+        
+#         # First footer landmark
+#         if footer_start_y is None:
+#             if any(kw in text_lower for kw in FOOTER_LANDMARKS):
+#                 footer_start_y = box["y"]
+    
+#     # Fallback to percentage if landmarks not found
+#     max_y = max(b["y"] for b in boxes) if boxes else 1000
+#     return (
+#         item_start_y or max_y * 0.30,
+#         footer_start_y or max_y * 0.75
+#     )
+
 def find_zone_boundaries(boxes: list[dict]) -> tuple[float, float]:
-    """
-    Detect item zone start/end by looking for landmark keywords
-    instead of fixed percentages.
-    """
     item_start_y = None
     footer_start_y = None
     
-    ITEM_LANDMARKS = {"total", "belanja", "tunai", "jumlah", "pcs", "harga"}
-    FOOTER_LANDMARKS = {"terima", "kasih", "layanan", "konsumen", "telp", "sms", "klikin"}
+    # Hanya date pattern yang trigger item start — lebih specific
+    DATE_PATTERN = re.compile(r'\d{2}[./]\d{2}[./]\d{2,4}')
+    
+    # Total keywords = akhir item zone
+    TOTAL_LANDMARKS = {"total", "tunai", "jumlah uang", "kembali"}
+    
+    # Footer = setelah payment summary
+    FOOTER_LANDMARKS = {"terima", "kasih", "layanan", "konsumen", "telp", "sms", "klikin", "kontak"}
     
     sorted_boxes = sorted(boxes, key=lambda b: b["y"])
     
     for box in sorted_boxes:
         text_lower = box["text"].lower()
         
-        # First box that looks like a transaction line or item
+        # Item zone start = date line (transaction header)
         if item_start_y is None:
-            if any(kw in text_lower for kw in ITEM_LANDMARKS) or \
-               bool(__import__('re').search(r'\d{2}[./]\d{2}[./]\d{2,4}', box["text"])):
+            if DATE_PATTERN.search(box["text"]):
                 item_start_y = box["y"]
         
-        # First footer landmark
+        # Footer start
         if footer_start_y is None:
             if any(kw in text_lower for kw in FOOTER_LANDMARKS):
                 footer_start_y = box["y"]
     
-    # Fallback to percentage if landmarks not found
     max_y = max(b["y"] for b in boxes) if boxes else 1000
     return (
-        item_start_y or max_y * 0.30,
-        footer_start_y or max_y * 0.75
+        item_start_y or max_y * 0.25,
+        footer_start_y or max_y * 0.80
     )
 
 def merge_spaced_numbers(text: str) -> str:
@@ -602,8 +722,6 @@ def classify_field_status(confidence: float, field_name: str) -> str:
 
     if confidence >= threshold:
         return "VERIFIED"
-    elif confidence >= threshold - PENDING_MARGIN:
-        return "PENDING"
     else:
         return "ACTION_REQUIRED"
 
@@ -740,9 +858,9 @@ def determine_receipt_status(response_data: dict, ocr_boxes: list) -> dict:
     elif high_risk_failed:
         overall_status = "ACTION_REQUIRED"
     elif any(f["status"] == "ACTION_REQUIRED" for f in low_confidence_fields):
-        overall_status = "PENDING"   # non-critical field failed
+        overall_status = "ACTION_REQUIRED"   # non-critical field failed
     else:
-        overall_status = "PENDING"   # some fields need review but not critical
+        overall_status = "ACTION_REQUIRED"   # some fields need review but not critical
 
     return {
         "status": overall_status,
@@ -791,10 +909,21 @@ async def refine_receipt(raw_text: str, ocr_boxes: list = None):
     prompt = f"""
     Kamu adalah sistem AI ekstraksi data profesional. Gunakan contoh format berikut untuk memproses data baru.
 
+    OCR:
     {input_section}
 
     KLASIFIKASI KATEGORI:
     {category_examples}
+
+    FORMAT INPUT OCR:
+        - Teks dipisahkan oleh " | " menandakan KOLOM BERBEDA dalam satu baris
+        - Format kolom struk: NAMA ITEM | QTY | HARGA_SATUAN | TOTAL
+        - Contoh:
+            "EXCLSO RBST GOLD 200 | 1 | 48200 | 48,200" → name="EXCLSO RBST GOLD 200", qty=1, price=48200, total_price=48200
+            
+            "IDM KTG PLSTK SDG | 1 | 200 | 200" → name="IDM KTG PLSTK SDG", qty=1, price=200, total_price=200. BUKAN price=200200
+  
+            "VOUCHER | (4,700)" → assign ke item di atasnya, voucher_amount=4700
 
     INSTRUKSI KHUSUS:
     1. MERCHANT_NAME:
@@ -839,12 +968,36 @@ async def refine_receipt(raw_text: str, ocr_boxes: list = None):
         - Jika ada pola "digit spasi 3digit" → gabungkan sebagai satu angka
         - Contoh: "2PCSx 3 500 7 000" → qty=2, price=3500, total=7000
 
-    6. DISCOUNT EXTRACTION:
+        CRITICAL — COLUMN SEPARATION:
+            Tab character (\t) atau spasi besar = kolom berbeda
+            Format kolom struk: NAMA  \t  QTY  \t  HARGA_SATUAN  \t  TOTAL
+    
+        JANGAN gabungkan angka dari kolom berbeda:
+            "IDM KTG PLSTK SDG \t 1 \t 200 \t 200" → name="IDM KTG PLSTK SDG", qty=1, price=200, total=200  ✓ BUKAN → price=200200  ✗
+
+        Few-shot examples:
+    
+        Input: "EXCLSO RBST GOLD 200 \t 1 \t 48200 \t 48,200"
+        Output: name="EXCLSO RBST GOLD 200", qty=1, price=48200, total_price=48200
+    
+        Input: "IDM KTG PLSTK 1W SDG \t 1 \t 200 \t 200"
+        Output: name="IDM KTG PLSTK 1W SDG", qty=1, price=200, total_price=200
+    
+        Input: "PDULI BNCANA SUMATRA \t 1 \t 300 \t 300"
+        Output: name="PDULI BNCANA SUMATRA", qty=1, price=300, total_price=300
+    
+        Input: "RINSO ANTINODA ROSE FRESH 700" "1PCSx \t 24.000= \t 24.000"
+        Output: name="RINSO ANTINODA ROSE FRESH 700", qty=1, price=24000, total_price=24000
+        Note: "700" di nama produk = ukuran ml, BUKAN harga
+
+    6. DISCOUNT and VOUCHER EXTRACTION:
         a. Per item: cari "Diskon", "Disc", "Voucher" di bawah item
-        b. Summary: distribusikan proporsional ke semua item
-        c. Tidak ada diskon: discount_type: null, discount_value: 0, voucher_amount: 0
-        d. total_price = (qty * price) - discount_amount - voucher_amount. Contoh: price=31000, qty=1,discount=6100, voucher=2000 → total_price = (1 × 31000) - 6100 - 2000 = 22900
-        JANGAN gunakan angka total dari struk langsung jika ada diskon.
+        b. Format tanda kurung = pengurangan:
+            "(4,700)" → voucher_amount = 4700  (tanda kurung BUKAN berarti negatif di output) "VOUCHER : (4,700)" → assign ke item DI ATASNYA → voucher_amount = 4700
+        c. Summary: distribusikan proporsional ke semua item
+        d. Tidak ada diskon: discount_type: null, discount_value: 0, voucher_amount: 0
+        e. total_price = (qty * price) - discount_amount - voucher_amount. Contoh: price=31000, qty=1,discount=6100, voucher=2000 → total_price = (1 × 31000) - 6100 - 2000 = 22900
+        JANGAN gunakan angka total dari struk langsung jika ada diskon. Jika tidak sama → cek apakah ada voucher/diskon yang belum di-assign
 
     FORMAT JSON:
     {{
@@ -874,13 +1027,13 @@ async def refine_receipt(raw_text: str, ocr_boxes: list = None):
         logger.info(f"Sending to LLM for receipt: {receipt_id}")
 
         response = await custom_client.generate(
-            model="gpt-oss:20b-cloud",
+            model="gpt-oss:120b-cloud",
             prompt=prompt,
             format="json",
             options={
-                "temperature": 0.2,
-                "top_k": 20,
-                "top_p": 0.5,
+                "temperature": 0.1,
+                "top_k": 30,
+                "top_p": 0.6,
             }
         )
 

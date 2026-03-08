@@ -246,11 +246,29 @@ def _parse_ocr_result(result) -> list[OCRBox]:
 #         logger.error(f"OCR failed for image {image_path}: {e}")
 #         return ""
 
-def reconstruct_lines(boxes: list[OCRBox], y_tolerance: int = 24) -> str:
+def get_dynamic_tolerance(boxes: list[dict]) -> int:
+    if len(boxes) < 2:
+        return 15
+    
+    # Estimasi line height dari rata-rata height box
+    heights = [b.height for b in boxes if b.height > 5]
+    if not heights:
+        return 15
+    
+    median_height = sorted(heights)[len(heights) // 2]
+    
+    # Tolerance = 60% dari median line height
+    # Cukup untuk catch misalignment, tapi gak sampai gabung baris berbeda
+    return int(median_height * 0.6)
+
+def reconstruct_lines(boxes: list[OCRBox], y_tolerance: int = None) -> str:
     """
     Group OCRBoxes yang ada di baris yang sama (y proximity),
     sort per baris by x, join jadi lines.
     """
+    if y_tolerance is None:
+        y_tolerance = get_dynamic_tolerance(boxes)
+
     if not boxes:
         return ""
     
@@ -343,7 +361,7 @@ async def ocr_image(image_path: str) -> OCRResult:
                 return OCRResult(boxes=[], raw_text="")
 
             # raw_text for backward compat with your existing LLM prompt
-            raw_text = reconstruct_lines(boxes, y_tolerance=24)
+            raw_text = reconstruct_lines(boxes)
             print("Reconstructed lines:")
             print(raw_text)
             logger.info(

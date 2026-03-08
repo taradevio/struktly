@@ -80,7 +80,9 @@ async def background_refine(update, ocr_result, file_path):
             "text": b.text, 
             "confidence": b.confidence, 
             "x": b.x, 
-            "y": b.y
+            "y": b.y,
+            "width": b.width,
+            "height": b.height
         }
         for b in ocr_result.boxes
     ]
@@ -178,7 +180,6 @@ async def background_refine(update, ocr_result, file_path):
 
     status_emoji = {
         "VERIFIED":        "✅",
-        "PENDING":         "⏳",
         "ACTION_REQUIRED": "⚠️",
     }.get(status, "❓")
         
