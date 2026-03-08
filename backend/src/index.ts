@@ -74,10 +74,10 @@ app.post("/process-receipt", async (c) => {
 
     const transactionDate = new Date(`${dateStr}T${safeTime}`).toISOString();
 
-    const statusValid = ["PENDING", "VERIFIED", "ACTION_REQUIRED", "FAILED"];
+    const statusValid = ["VERIFIED", "ACTION_REQUIRED", "FAILED"];
     const status = statusValid.includes(payloadData.receipt.status)
       ? payloadData.receipt.status
-      : "PENDING";
+      : "ACTION_REQUIRED";
 
     const { data: receiptData, error: receiptError } = await db
       .from("receipts")
