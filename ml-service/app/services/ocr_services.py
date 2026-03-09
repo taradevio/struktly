@@ -21,11 +21,96 @@ class OCRBox:
 class OCRResult:
     boxes: list[OCRBox]
     raw_text: str
-    quality_issues: list[str] = None
+    quality_issues: list[str] | None = None
 
     def has_field_candidate(self, min_confidence: float = 0.0) -> list[OCRBox]:
         return [b for b in self.boxes if b.confidence >= min_confidence]
     
+
+def correct_perspective(img):
+    """
+    Detect dan koreksi struk yang melengkung/miring.
+    """
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edged = cv2.Canny(blurred, 50, 150)
+    
+    contours, _ = cv2.findContours(
+        edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+    
+    if not contours:
+        return img
+    
+    largest = max(contours, key=cv2.contourArea)
+    
+    # Approximate polygon
+    peri = cv2.arcLength(largest, True)
+    approx = cv2.approxPolyDP(largest, 0.02 * peri, True)
+    
+    # Butuh tepat 4 corner untuk perspective transform
+    if len(approx) != 4:
+        logger.warning("Could not detect 4 corners — skipping perspective correction")
+        return img
+    
+    # Order corners: top-left, top-right, bottom-right, bottom-left
+    pts = approx.reshape(4, 2).astype(np.float32)
+    rect = order_points(pts)
+    
+    (tl, tr, br, bl) = rect
+    
+    # Target width dan height
+    width = int(max(
+        np.linalg.norm(br - bl),
+        np.linalg.norm(tr - tl)
+    ))
+    height = int(max(
+        np.linalg.norm(tr - br),
+        np.linalg.norm(tl - bl)
+    ))
+    
+    dst = np.array([
+        [0, 0],
+        [width - 1, 0],
+        [width - 1, height - 1],
+        [0, height - 1]
+    ], dtype=np.float32)
+    
+    M = cv2.getPerspectiveTransform(rect, dst)
+    warped = cv2.warpPerspective(img, M, (width, height))
+
+    # Safety guard: if the warped area is < 50% of the original, the contour
+    # likely locked onto a small object (tape, shadow, table edge) rather than
+    # the receipt itself. Fall back to the original in that case.
+    orig_area = img.shape[0] * img.shape[1]
+    warped_area = warped.shape[0] * warped.shape[1]
+    if warped_area < orig_area * 0.5:
+        logger.warning(
+            f"Perspective warp produced a very small image "
+            f"({warped.shape[1]}x{warped.shape[0]} = {warped_area}px vs "
+            f"original {img.shape[1]}x{img.shape[0]} = {orig_area}px) — "
+            "reverting to original"
+        )
+        return img
+
+    logger.info(f"Perspective corrected: {width}x{height}")
+    return warped
+
+
+def order_points(pts):
+    """Order 4 points: top-left, top-right, bottom-right, bottom-left"""
+    rect = np.zeros((4, 2), dtype=np.float32)
+    
+    s = pts.sum(axis=1)
+    rect[0] = pts[np.argmin(s)]  # top-left: smallest sum
+    rect[2] = pts[np.argmax(s)]  # bottom-right: largest sum
+    
+    diff = np.diff(pts, axis=1)
+    rect[1] = pts[np.argmin(diff)]  # top-right: smallest diff
+    rect[3] = pts[np.argmax(diff)]  # bottom-left: largest diff
+    
+    return rect
+
 def get_receipt_area_ratio(img) -> float:
     """
     Hitung rasio area struk vs total foto.
@@ -263,51 +348,76 @@ def get_dynamic_tolerance(boxes: list[dict]) -> int:
 
 def reconstruct_lines(boxes: list[OCRBox], y_tolerance: int = None) -> str:
     """
-    Group OCRBoxes yang ada di baris yang sama (y proximity),
-    sort per baris by x, join jadi lines.
+    Group OCRBoxes into lines using vertical-overlap detection (not center-Y
+    proximity), then insert " | " where there is a large horizontal gap between
+    tokens on the same line. This produces the same columnar format that the
+    LLM prompt documents (NAME | QTY | PRICE | TOTAL).
     """
     if y_tolerance is None:
         y_tolerance = get_dynamic_tolerance(boxes)
 
     if not boxes:
         return ""
-    
+
     lines = []
     used = set()
-    
-    # Sort by y dulu
     sorted_boxes = sorted(boxes, key=lambda b: b.y)
-    
+
     for i, box in enumerate(sorted_boxes):
         if i in used:
             continue
-        
-        # Kumpulin semua box yang y-nya dalam range tolerance
+
         line_boxes = [box]
         used.add(i)
-        
+
         for j, other in enumerate(sorted_boxes):
             if j in used:
                 continue
-            # Cek overlap y — box dianggap satu baris kalau y center-nya deket
-            box_center_y = box.y + box.height / 2
-            other_center_y = other.y + other.height / 2
-            
-            if abs(box_center_y - other_center_y) <= y_tolerance:
+
+            line_top    = min(b.y for b in line_boxes)
+            line_bottom = max(b.y + b.height for b in line_boxes)
+            other_top    = other.y
+            other_bottom = other.y + other.height
+
+            overlap = min(line_bottom, other_bottom) - max(line_top, other_top)
+            min_height = min(line_bottom - line_top, other_bottom - other_top)
+
+            # Overlap > 30 % of the smaller box = same line
+            if min_height > 0 and overlap / min_height > 0.3:
                 line_boxes.append(other)
                 used.add(j)
-        
-        # Sort by x dalam satu baris
+
+        # Sort tokens left → right within the line
         line_boxes.sort(key=lambda b: b.x)
-        line_text = " ".join(b.text for b in line_boxes)
-        lines.append(line_text)
-    
+
+        parts = []
+        for k, lb in enumerate(line_boxes):
+            if k == 0:
+                parts.append(lb.text)
+                continue
+            prev = line_boxes[k - 1]
+            gap = lb.x - (prev.x + prev.width)
+            # Gap > 40 px = different column → mark with " | "
+            if gap > 40:
+                parts.append(" | " + lb.text)
+            else:
+                parts.append(" " + lb.text)
+
+        lines.append("".join(parts))
+
     return "\n".join(lines)
 
 async def ocr_image(image_path: str) -> OCRResult:
     """
     Returns structured OCRResult with per-box confidence scores.
     Falls back to empty OCRResult on failure.
+
+    Pipeline:
+      1. Quality assessment (soft-fail: attach warnings, don't abort)
+      2. Perspective correction  →  crop  →  grayscale  →  inversion fix
+      3. Denoise  →  CLAHE  →  deskew
+      4. RapidOCR detection + recognition
+      5. Parse boxes into OCRBox dataclasses with overlap-based line grouping
     """
     try:
         loop = asyncio.get_event_loop()
@@ -317,59 +427,56 @@ async def ocr_image(image_path: str) -> OCRResult:
             if img is None:
                 logger.warning(f"Could not read image: {image_path}")
                 return OCRResult(boxes=[], raw_text="")
-            
 
+            # ── Quality assessment (non-blocking) ──────────────────────────
             quality = assess_image_quality(img)
+            quality_issues = quality["issues"] if not quality["is_acceptable"] else []
+            if quality_issues:
+                logger.warning(f"Image quality issues detected: {quality_issues} — attempting OCR anyway")
 
-            if not quality["is_acceptable"]:
-                logger.warning(f"Image quality issues: {quality['issues']}")
-                return OCRResult(
-            boxes=[], 
-            raw_text="",
-            quality_issues=quality["issues"]  # pass ke caller
-            )
+            # ── Step 1: Perspective correction ────────────────────────────
+            img_corrected = correct_perspective(img)
+            cv2.imwrite("debug_perspective.jpg", img_corrected)
 
-            img_crop = crop_receipt(img)
+            # ── Step 2: Crop to receipt area ───────────────────────────────
+            # img_corrected is the perspective-fixed image, or the original if
+            # the fix produced a fragment smaller than 50% of the frame.
+            img_crop = crop_receipt(img_corrected)
 
-            # ── Step 1: Grayscale ──────────────────────────────────────────
+            # ── Step 3: Grayscale ──────────────────────────────────────────
             gray = cv2.cvtColor(img_crop, cv2.COLOR_BGR2GRAY)
 
-            # ── Step 2: Fix inverted thermal receipts ──────────────────────
+            # ── Step 4: Fix inverted thermal receipts (white-on-dark) ──────
             gray = check_and_fix_inversion(gray)
 
-            gray = img_crop[:, :, 1]
-    
-            # 4. Denoise
+            # ── Step 5: Denoise ────────────────────────────────────────────
             denoised = cv2.fastNlMeansDenoising(gray, h=15)
-    
-            # 5. CLAHE
+
+            # ── Step 6: CLAHE contrast enhancement ────────────────────────
             clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
             enhanced = clahe.apply(denoised)
 
-            # ── Step 3: Deskew ─────────────────────────────────────────────
+            # ── Step 7: Deskew ─────────────────────────────────────────────
             deskewed = deskew(enhanced)
 
-            # ── Step 4: Run OCR ────────────────────────────────────────────
+            # ── Step 8: Run OCR ────────────────────────────────────────────
             result = engine(deskewed)
 
-            # ── Step 5: Parse structured output with confidence ────────────
+            # ── Step 9: Parse boxes ────────────────────────────────────────
             boxes = _parse_ocr_result(result)
-            print(boxes)
 
             if not boxes:
                 logger.warning(f"No text detected in: {image_path}")
-                return OCRResult(boxes=[], raw_text="")
+                return OCRResult(boxes=[], raw_text="", quality_issues=quality_issues)
 
-            # raw_text for backward compat with your existing LLM prompt
+            # Build raw_text using unified overlap-based line reconstruction
             raw_text = reconstruct_lines(boxes)
-            print("Reconstructed lines:")
-            print(raw_text)
             logger.info(
                 f"OCR complete: {len(boxes)} boxes, "
                 f"avg confidence: {sum(b.confidence for b in boxes)/len(boxes):.3f}"
             )
 
-            return OCRResult(boxes=boxes, raw_text=raw_text)
+            return OCRResult(boxes=boxes, raw_text=raw_text, quality_issues=quality_issues or None)
 
         return await loop.run_in_executor(None, process)
 

@@ -308,8 +308,6 @@ FIELD_THRESHOLDS = {
     "category":       0.60,
 }
 
-PENDING_MARGIN = 0.10  # conf >= threshold - margin → PENDING
-
 # def reconstruct_lines(boxes: list[dict], y_tolerance: int = 25) -> str:
 #     """Dict version of reconstruct_lines — works with {"text", "x", "y"} dicts."""
 #     if not boxes:
@@ -347,15 +345,23 @@ def get_dynamic_tolerance(boxes: list[dict]) -> int:
         return 15
     
     median_height = sorted(heights)[len(heights) // 2]
-    return int(median_height * 0.6)
+    # Estimasi row spacing dari gap vertikal antar boxes
+    sorted_by_y = sorted(boxes, key=lambda b: b["y"])
+    gaps = []
+    for i in range(1, min(10, len(sorted_by_y))):
+        gap = sorted_by_y[i]["y"] - sorted_by_y[i-1]["y"]
+        if gap > 2:  # filter overlap noise
+            gaps.append(gap)
+
+    if gaps:
+        median_gap = sorted(gaps)[len(gaps) // 2]
+        # Tolerance = 40% dari row spacing, tapi capped di 50% box height
+        return int(min(median_gap * 0.45, median_height * 0.5))
+    return int(median_height * 0.45)
 
 def reconstruct_lines(boxes: list[dict], y_tolerance: int = None) -> str:
-
     if y_tolerance is None:
         y_tolerance = get_dynamic_tolerance(boxes)
-
-    print(f"DEBUG y_tolerance: {y_tolerance}")
-    print(f"DEBUG sample heights: {[b.get('height', 0) for b in boxes[:10]]}")
 
     if not boxes:
         return ""
@@ -364,60 +370,135 @@ def reconstruct_lines(boxes: list[dict], y_tolerance: int = None) -> str:
     used = set()
     sorted_boxes = sorted(boxes, key=lambda b: b["y"])
 
-    for i, box in enumerate(sorted_boxes):
-        print(f"BOX {i}: '{box['text']}' cy={box['y'] + box.get('height', 20)/2:.1f}")
-
-    for i, box in enumerate(sorted_boxes):
+    for i, anchor in enumerate(sorted_boxes):
         if i in used:
             continue
 
-        line_boxes = [box]
+        line_boxes = [anchor]
         used.add(i)
 
-        box_top = box["y"]
-        box_bottom = box["y"] + box.get("height", 20)
+        # ← KEY FIX: pakai center y dari ANCHOR, bukan dari growing group
+        anchor_cy = anchor["y"] + anchor.get("height", 20) / 2
 
         for j, other in enumerate(sorted_boxes):
             if j in used:
                 continue
-            # box_center_y = box["y"] + box.get("height", 20) / 2
-            # other_center_y = other["y"] + other.get("height", 20) / 2
-            # if abs(box_center_y - other_center_y) <= y_tolerance:
-            #     line_boxes.append(other)
-            #     used.add(j)
 
-            other_top = other["y"]
-            other_bottom = other["y"] + other.get("height", 20)
-            
-            # Cek vertical overlap — dua box dianggap satu baris kalau area-nya overlap
-            overlap = min(box_bottom, other_bottom) - max(box_top, other_top)
-            min_height = min(box_bottom - box_top, other_bottom - other_top)
-            
-            # Overlap > 40% dari box terkecil = satu baris
-            if min_height > 0 and overlap / min_height > 0.3:
+            other_cy = other["y"] + other.get("height", 20) / 2
+
+            # Simple center-to-center distance dari anchor — no expansion
+            if abs(anchor_cy - other_cy) <= y_tolerance:
                 line_boxes.append(other)
                 used.add(j)
-        
-        # ← Detect gap antar kolom, insert tab sebagai separator
-        parts = []
-        # Sort by x
+
         line_boxes.sort(key=lambda b: b["x"])
+
+        parts = []
         for k, lb in enumerate(line_boxes):
             if k == 0:
                 parts.append(lb["text"])
                 continue
             prev = line_boxes[k - 1]
             gap = lb["x"] - (prev["x"] + prev.get("width", 50))
-            print(f"DEBUG gap: '{prev['text']}' → '{lb['text']}' = {gap}px")
-            # Gap > 40px = kolom berbeda → pakai tab biar LLM ngerti ini terpisah
             if gap > 40:
                 parts.append("  |  " + lb["text"])
             else:
                 parts.append(" " + lb["text"])
-        
+
         lines.append("".join(parts))
 
     return "\n".join(lines)
+
+
+def fix_fragmented_numbers(text: str) -> str:
+    """
+    '24. .000' → '24.000'
+    '75, ,400' → '75,400'  
+    '13, ,200' → '13,200'
+    """
+    # Fix split decimals/thousands: "24." + " " + ".000" → "24.000"
+    text = re.sub(r'(\d+[.,])\s+([.,]\d+)', r'\1\2', text)
+    # Fix trailing separator: "75," + " " + ",400" → "75,400"  
+    text = re.sub(r'(\d+[.,])\s+([.,]\d{3})', r'\1\2', text)
+    # tambah: "43,,500" → "43,500" (double separator)
+    text = re.sub(r'(\d+)[.,]{2,}(\d+)', r'\1,\2', text)
+    
+    # tambah: "43, 500" → "43500" (space after comma in thousands)
+    text = re.sub(r'(\d+),\s+(\d{3})(?!\d)', r'\1\2', text)
+
+    return text
+# def reconstruct_lines(boxes: list[dict], y_tolerance: int = None) -> str:
+
+#     if y_tolerance is None:
+#         y_tolerance = get_dynamic_tolerance(boxes)
+
+#     print(f"DEBUG y_tolerance: {y_tolerance}")
+#     print(f"DEBUG sample heights: {[b.get('height', 0) for b in boxes[:10]]}")
+
+#     if not boxes:
+#         return ""
+
+#     lines = []
+#     used = set()
+#     sorted_boxes = sorted(boxes, key=lambda b: b["y"])
+
+#     for i, box in enumerate(sorted_boxes):
+#         print(f"BOX {i}: '{box['text']}' cy={box['y'] + box.get('height', 20)/2:.1f}")
+
+#     for i, box in enumerate(sorted_boxes):
+#         if i in used:
+#             continue
+
+#         line_boxes = [box]
+#         used.add(i)
+
+#         # box_top = box["y"]
+#         # box_bottom = box["y"] + box.get("height", 20)
+
+#         for j, other in enumerate(sorted_boxes):
+#             if j in used:
+#                 continue
+#             # box_center_y = box["y"] + box.get("height", 20) / 2
+#             # other_center_y = other["y"] + other.get("height", 20) / 2
+#             # if abs(box_center_y - other_center_y) <= y_tolerance:
+#             #     line_boxes.append(other)
+#             #     used.add(j)
+
+#             line_top    = min(b["y"] for b in line_boxes)
+#             line_bottom = max(b["y"] + b.get("height", 20) for b in line_boxes)
+
+#             other_top = other["y"]
+#             other_bottom = other["y"] + other.get("height", 20)
+            
+#             # Cek vertical overlap — dua box dianggap satu baris kalau area-nya overlap
+#             overlap = min(line_bottom, other_bottom) - max(line_top, other_top)
+#             min_height = min(line_bottom - line_top, other_bottom - other_top)
+            
+#             # Overlap > 40% dari box terkecil = satu baris
+#             if min_height > 0 and overlap / min_height > 0.3:
+#                 line_boxes.append(other)
+#                 used.add(j)
+        
+#         # ← Detect gap antar kolom, insert tab sebagai separator
+#         parts = []
+#         # Sort by x
+#         line_boxes.sort(key=lambda b: b["x"])
+#         for k, lb in enumerate(line_boxes):
+#             if k == 0:
+#                 parts.append(lb["text"])
+#                 continue
+#             prev = line_boxes[k - 1]
+#             gap = lb["x"] - (prev["x"] + prev.get("width", 50))
+#             print(f"DEBUG gap: '{prev['text']}' → '{lb['text']}' = {gap}px")
+#             # Gap > 40px = kolom berbeda → pakai tab biar LLM ngerti ini terpisah
+#             if gap > 40:
+#                 parts.append("  |  " + lb["text"])
+#             else:
+#                 parts.append(" " + lb["text"])
+        
+#         lines.append("".join(parts))
+
+#     return "\n".join(lines)
 
 # def find_zone_boundaries(boxes: list[dict]) -> tuple[float, float]:
 #     """
@@ -509,8 +590,8 @@ def build_llm_input(ocr_boxes: list) -> str:
     filtered = [
         b for b in ocr_boxes
         if b["confidence"] >= 0.7
-        and len(b["text"].strip()) > 1
-        and b["text"].strip() not in {"..", ".", ",", "V"}
+        and len(b["text"].strip()) >= 1
+        and not re.match(r'^[.,\-]+$', b["text"].strip())
     ]
 
     item_zone_start, footer_zone_start = find_zone_boundaries(filtered)
@@ -521,39 +602,127 @@ def build_llm_input(ocr_boxes: list) -> str:
     body_boxes   = [b for b in filtered if item_zone_start <= b["y"] < footer_zone_start]
     
     header_text = merge_spaced_numbers(reconstruct_lines(header_boxes))
-    body_text   = merge_spaced_numbers(reconstruct_lines(body_boxes))
+    body_text   = fix_fragmented_numbers(reconstruct_lines(body_boxes))
 
     return f"=== HEADER ===\n{header_text}\n\n=== ITEMS & TOTALS ===\n{body_text}"
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
-def get_category_examples(items_text: str) -> str:
-    """Generate contoh kategori berdasarkan items yang terdeteksi"""
-    category_keywords = {
-        "Food & Beverage": ["makanan", "minuman", "snack", "nasi", "mie", "kopi", "teh", "roti", "kue", "daging", "sayur", "buah", "susu", "jus"],
-        "Shopping": ["sabun", "shampoo", "deterjen", "pasta gigi", "tissue", "baju", "celana", "sepatu", "tas", "kosmetik", "alat tulis"],
-        "Transport": ["bensin", "parking", "parkir", "toll", "tol", "gojek", "grab", "taksi", "bus", "kereta", "pesawat"],
-        "Bills": ["listrik", "air", "internet", "pulsa", "token", "pln", "pdam", "tagihan"],
-        "Health": ["obat", "vitamin", "suplemen", "dokter", "rumah sakit", "apotek", "masker", "handsanitizer"],
-        "Entertainment": ["nonton", "bioskop", "game", "spotify", "netflix", "konser", "hiburan"],
-        "Electronics": ["laptop", "komputer", "hp", "charger", "kabel", "headset", "mouse", "keyboard"],
-    }
+# ── Valid categories (must match frontend CATEGORY_CONFIG) ─────────────────────
+VALID_CATEGORIES = [
+    "Food & Beverage",
+    "Shopping",
+    "Transport",
+    "Bills & Utilities",
+    "Health",
+    "Entertainment",
+    "Electronics",
+    "Others",
+]
 
-    detected_categories = set()
+CATEGORY_KEYWORDS = {
+    "Food & Beverage": [
+        "makanan", "minuman", "snack", "nasi", "mie", "kopi", "teh",
+        "roti", "kue", "daging", "sayur", "buah", "susu", "jus",
+        "biscuit", "biskuit", "coklat", "es", "air mineral", "aqua",
+        "indomie", "minyak", "gula", "tepung", "beras", "telur",
+        "keju", "mentega", "saus", "kecap", "bumbu", "lava", "chips",
+    ],
+    "Shopping": [
+        "sabun", "shampoo", "deterjen", "pasta gigi", "tissue",
+        "baju", "celana", "sepatu", "tas", "kosmetik", "alat tulis",
+        "plastik", "kantong", "pewangi", "softener", "rinso",
+    ],
+    "Transport": [
+        "bensin", "parking", "parkir", "toll", "tol",
+        "gojek", "grab", "taksi", "bus", "kereta", "pesawat",
+        "pertamax", "pertalite", "solar",
+    ],
+    "Bills & Utilities": [
+        "listrik", "air", "internet", "pulsa", "token",
+        "pln", "pdam", "tagihan", "wifi", "indihome",
+    ],
+    "Health": [
+        "obat", "vitamin", "suplemen", "dokter", "rumah sakit",
+        "apotek", "masker", "handsanitizer", "paracetamol",
+    ],
+    "Entertainment": [
+        "nonton", "bioskop", "game", "spotify", "netflix",
+        "konser", "hiburan", "tiket",
+    ],
+    "Electronics": [
+        "laptop", "komputer", "hp", "charger", "kabel",
+        "headset", "mouse", "keyboard", "monitor", "printer",
+        "coolingpad", "adaptor", "usb",
+    ],
+}
+
+CATEGORY_EXAMPLES = {
+    "Food & Beverage": [
+        '"KRPIK SINGKONG BALADO" → "Food & Beverage"',
+        '"AQUA 600ML" → "Food & Beverage"',
+        '"INDOMIE GORENG" → "Food & Beverage"',
+    ],
+    "Shopping": [
+        '"SABUN MANDI LUX" → "Shopping"',
+        '"DETERJEN RINSO" → "Shopping"',
+    ],
+    "Transport": [
+        '"PERTALITE 10L" → "Transport"',
+        '"PARKIR MALL" → "Transport"',
+    ],
+    "Bills & Utilities": [
+        '"TOKEN PLN 50RB" → "Bills & Utilities"',
+        '"PULSA TELKOMSEL" → "Bills & Utilities"',
+    ],
+    "Health": [
+        '"PARACETAMOL" → "Health"',
+        '"MASKER MEDIS" → "Health"',
+    ],
+    "Entertainment": [
+        '"TIKET BIOSKOP" → "Entertainment"',
+    ],
+    "Electronics": [
+        '"CHARGER USB-C" → "Electronics"',
+    ],
+}
+
+
+def get_category_prompt(items_text: str) -> str:
+    """
+    Build a dynamic category classification section for the LLM prompt.
+    Detects which categories are relevant from the OCR text,
+    then includes only those categories + examples.
+    Always includes the full valid category list so the LLM knows all options.
+    """
+    detected = set()
     items_lower = items_text.lower()
 
-    for category, keywords in category_keywords.items():
+    for category, keywords in CATEGORY_KEYWORDS.items():
         if any(kw in items_lower for kw in keywords):
-            detected_categories.add(category)
+            detected.add(category)
 
-    examples = []
-    if "Food & Beverage" in detected_categories or not detected_categories:
-        examples.append('"KRPIK SINGKONG BALADO" → "Food & Beverage"\n"Nasi Goreng Special" → "Food & Beverage"')
-    if "Shopping" in detected_categories:
-        examples.append('"SABUN MANDI LUX" → "Shopping"\n"DETERJEN RINCO" → "Shopping"')
-    if "Health" in detected_categories:
-        examples.append('"PARACETAMOL" → "Health"\n"MASKER MEDIS" → "Health"')
+    # Build examples — prioritise detected categories, always show at least one
+    examples_lines = []
+    for cat in VALID_CATEGORIES:
+        if cat in detected and cat in CATEGORY_EXAMPLES:
+            examples_lines.extend(CATEGORY_EXAMPLES[cat])
 
-    return "\n".join(examples) if examples else '"ITEM" → "Others"'
+    # Fallback: if nothing detected, show Food & Beverage as default
+    if not examples_lines:
+        examples_lines.extend(CATEGORY_EXAMPLES["Food & Beverage"])
+
+    valid_list = ", ".join(f'"{c}"' for c in VALID_CATEGORIES)
+    examples_block = "\n        ".join(examples_lines)
+
+    return f"""KLASIFIKASI KATEGORI:
+        Kategori VALID (HANYA gunakan salah satu dari daftar ini):
+        {valid_list}
+
+        Contoh klasifikasi:
+        {examples_block}
+
+        Jika item tidak cocok dengan kategori manapun → gunakan "Others".
+        JANGAN buat kategori baru di luar daftar di atas."""
 
 
 def is_valid_ocr_text(raw_text: str) -> tuple[bool, str]:
@@ -618,7 +787,7 @@ def match_field_confidence(field_value, ocr_boxes: list, field_name: str = "") -
         return _match_numeric_confidence(field_value, ocr_boxes)
 
     # ── Date fields: match raw fragments ──────────────────────────────────
-    if field_name in {"date"}:
+    if field_name in {"date", "time"}:
         return _match_date_confidence(field_str, ocr_boxes)
 
     # ── Text fields: token-based matching ────────────────────────────────
@@ -715,7 +884,7 @@ def _match_date_confidence(field_str: str, ocr_boxes: list) -> float:
 
 def classify_field_status(confidence: float, field_name: str) -> str:
     """
-    Classify a field as VERIFIED / PENDING / ACTION_REQUIRED
+    Classify a field as VERIFIED / ACTION_REQUIRED
     based on calibrated per-field thresholds.
     """
     threshold = FIELD_THRESHOLDS.get(field_name, 0.75)
@@ -855,12 +1024,8 @@ def determine_receipt_status(response_data: dict, ocr_boxes: list) -> dict:
 
     if not low_confidence_fields:
         overall_status = "VERIFIED"
-    elif high_risk_failed:
-        overall_status = "ACTION_REQUIRED"
-    elif any(f["status"] == "ACTION_REQUIRED" for f in low_confidence_fields):
-        overall_status = "ACTION_REQUIRED"   # non-critical field failed
     else:
-        overall_status = "ACTION_REQUIRED"   # some fields need review but not critical
+        overall_status = "ACTION_REQUIRED"
 
     return {
         "status": overall_status,
@@ -885,7 +1050,7 @@ async def refine_receipt(raw_text: str, ocr_boxes: list = None):
         }
 
     receipt_id = str(uuid.uuid4())
-    category_examples = get_category_examples(raw_text)
+    category_section = get_category_prompt(raw_text)
 
     # Build spatially-aware input for LLM if boxes available
     # if ocr_boxes:
@@ -899,129 +1064,230 @@ async def refine_receipt(raw_text: str, ocr_boxes: list = None):
     #     input_section = f"DATA OCR:\n{raw_text}"
 
     if ocr_boxes:
-        input_section = build_llm_input(ocr_boxes)  # use this instead
-    elif ocr_boxes:
-        # fallback: no zone filtering, but still clean text format
-        input_section = f"DATA OCR:\n{raw_text}"
+        structured = build_llm_input(ocr_boxes)  # zone-filtered + column separators
+        input_section = (
+            f"{structured}\n\n"
+            f"=== FULL RECONSTRUCTED TEXT (all lines, no filtering) ===\n"
+            f"{raw_text}"
+        )
+
+        print(input_section)
     else:
-        input_section = f"DATA OCR:\n{raw_text}"
+        input_section = f"=== FULL RECONSTRUCTED TEXT ===\n{raw_text}"
+
 
     prompt = f"""
-    Kamu adalah sistem AI ekstraksi data profesional. Gunakan contoh format berikut untuk memproses data baru.
+        Kamu adalah sistem ekstraksi data struk belanja Indonesia.
 
-    OCR:
-    {input_section}
+        {input_section}
 
-    KLASIFIKASI KATEGORI:
-    {category_examples}
+        {category_section}
 
-    FORMAT INPUT OCR:
-        - Teks dipisahkan oleh " | " menandakan KOLOM BERBEDA dalam satu baris
-        - Format kolom struk: NAMA ITEM | QTY | HARGA_SATUAN | TOTAL
-        - Contoh:
-            "EXCLSO RBST GOLD 200 | 1 | 48200 | 48,200" → name="EXCLSO RBST GOLD 200", qty=1, price=48200, total_price=48200
-            
-            "IDM KTG PLSTK SDG | 1 | 200 | 200" → name="IDM KTG PLSTK SDG", qty=1, price=200, total_price=200. BUKAN price=200200
-  
-            "VOUCHER | (4,700)" → assign ke item di atasnya, voucher_amount=4700
+        ATURAN EKSTRAKSI:
 
-    INSTRUKSI KHUSUS:
-    1. MERCHANT_NAME:
-        TIER 1 — Known brands (LLM normalize dari training knowledge):
-            - Cari nama brand nasional/retail chain yang kamu kenal
-            - Normalize OCR noise: "Indesmaret" → "INDOMARET", "ALFMRT" → "ALFAMART"
-            - Contoh brands: INDOMARET, ALFAMART, HYPERMART, LAWSON, CIRCLE K, GIANT, HERO, CARREFOUR, TRANSMART, LOTTE MART, YOGYA, dll
+        1. MERCHANT_NAME:
+          TIER 1 — Known brands (LLM normalize dari training knowledge):
+              - Cari nama brand nasional/retail chain yang kamu kenal
+              - Normalize OCR noise: "Indesmaret" → "INDOMARET", "ALFMRT" → "ALFAMART"
+              - Contoh brands: INDOMARET, ALFAMART, HYPERMART, LAWSON, CIRCLE K, GIANT, HERO, CARREFOUR, TRANSMART, LOTTE MART, YOGYA, dll
 
-        TIER 2 — Unknown/local stores:
-            - Ambil apa adanya dari OCR, jangan guess atau normalize
-            - Gunakan teks paling prominent di area header
-            - Jika OCR noise (confidence rendah, karakter aneh), ambil dari footer context
-            - JANGAN fabricate nama yang tidak ada di OCR
-    2. CURRENCY: Hapus semua titik/koma pemisah ribuan. Pastikan total_amount adalah INTEGER.
-    3. TOTAL_AMOUNT: 
-        - Setelah extract semua items, hitung manual: sum(qty * price per item)
-        - Bandingkan dengan nilai setelah kata "TOTAL", "T O T A L" atau "Total Belanja"
-        - Jika TOTAL yang tertulis ≠ sum items → gunakan sum items sebagai total_amount
-        - JUMLAH UANG = uang yang dibayar (bukan total belanja)
-        - KEMBALI = JUMLAH UANG - TOTAL (kembalian)
-        - Cross-check: TOTAL = JUMLAH UANG - KEMBALI
-        
-    4. DATE & TIME:
-        - Format input: DD/MM/YYYY atau DD-MM-YYYY (Indonesia: hari/bulan/tahun)
-        - Posisi tanggal: Footer atau header
-        - Penulisan biasanya: Tgl atau date
-        - Konversi ke YYYY-MM-DD (ISO 8601)
-        - TIME: format HH:MM
-        - Jika tidak ditemukan, gunakan null
-    
-    5. ITEM PRICE EXTRACTION:
-        Format A (Alfamart/Indomaret style):
-            NAMA PRODUK    QTY    HARGA_SATUAN    TOTAL
-            Contoh: "MMSUKA HOT LAVA 130    1    9500    9,500" → name="MMSUKA HOT LAVA 130", qty=1, price=9500, total=9500
+          TIER 2 — Unknown/local stores:
+              - Ambil apa adanya dari OCR, jangan guess atau normalize
+              - Gunakan teks paling prominent di area header
+              - Jika OCR noise (confidence rendah, karakter aneh), ambil dari footer context
+              - JANGAN fabricate nama yang tidak ada di OCR
+            Apabila nama mengandung alamat atau nama daerah, buang nama-nama tersebut dan ambil nama tokonya
 
-        Format B (Warung/kasir style):
-            NAMA PRODUK QTYpcs x HARGA = TOTAL
-            Contoh: "RINSO ANTINODA\n1PCSx 24.000= 24.000" → name="RINSO ANTINODA", qty=1, price=24000, total=24000
-        - Angka di nama produk bukan harga (ukuran/volume: 130ml, 600ml, 700g).
-        - Struk warung sering memisahkan ribuan dengan spasi: "3 500" = 3.500 = 3500
-        - "7 000" = 7.000 = 7000
-        - Jika ada pola "digit spasi 3digit" → gabungkan sebagai satu angka
-        - Contoh: "2PCSx 3 500 7 000" → qty=2, price=3500, total=7000
+        2. DATE & TIME:
+            - Format Indonesia: DD/MM/YYYY atau DD-MM-YYYY (hari/bulan/tahun, BUKAN bulan/hari)
+            - Konversi ke YYYY-MM-DD (ISO 8601). Contoh: "09/03/2026" → "2026-03-09"
+            - TIME: format HH:MM. Contoh: "Jam :10:57" → "10:57", "10.57" → "10:57"
+            - Jika tidak ditemukan date/time, gunakan null
 
-        CRITICAL — COLUMN SEPARATION:
-            Tab character (\t) atau spasi besar = kolom berbeda
-            Format kolom struk: NAMA  \t  QTY  \t  HARGA_SATUAN  \t  TOTAL
-    
-        JANGAN gabungkan angka dari kolom berbeda:
-            "IDM KTG PLSTK SDG \t 1 \t 200 \t 200" → name="IDM KTG PLSTK SDG", qty=1, price=200, total=200  ✓ BUKAN → price=200200  ✗
+        3. ITEMS — FORMAT KOLOM:
+           Input pakai " | " sebagai pemisah kolom. Format: NAMA | QTY | HARGA | TOTAL
+
+           Format A — Minimarket (Alfamart/Indomaret):
+             "MHSUKA HOT LAVA 130 | 1 | 9500 | 9,500" → name="MHSUKA HOT LAVA 130", qty=1, price=9500, total=9500
+             Angka di nama produk (130, 600, 700) = ukuran/volume, BUKAN harga.
+
+           Format B — Warung/kasir style (NpCSx):
+             "RINSO ANTINODA ROSE FRESH 700" diikuti baris "1PCSx | 24.000= | 24.000" → name="RINSO", qty=1, price=24000, total=24000
+
+           Format C — Spaced thousands (warung):
+             "2PCSx 3 500 7 000" → qty=2, price=3500, total=7000
+             Pattern: digit-spasi-3digit = ribuan. "3 500" = 3500
+
+           CRITICAL: JANGAN gabung angka dari kolom berbeda:
+             "IDM KTG PLSTK | 1 | 200 | 200" → price=200, BUKAN price=200200
+
+        4. VOUCHER/DISKON:
+           a. Per item: cari "Diskon", "Disc", "Voucher" di bawah item → assign ke item DI ATAS-nya
+              - "(4,700)" atau "VOUCHER : (4,700)" → voucher_amount=4700 (tanda kurung = pengurangan)
+           b. Summary: jika diskon di bagian bawah ("Total Diskon", "Total Voucher") → distribusikan proporsional ke semua item
+           c. Tidak ada diskon: discount_type=null, discount_value=0, voucher_amount=0
+           d. total_price = (qty × price) - discount_amount - voucher_amount
+              Contoh: price=31000, qty=1, discount=6100, voucher=2000 → total_price=22900
+
+        5. TOTAL:
+            - Gunakan "TOTAL BELANJA" atau label "TOTAL"
+            - Cross-check: TOTAL = TUNAI - KEMBALI
+            - Jika sum(items) ≠ TOTAL di struk → gunakan sum(items)
+            - Hapus semua titik/koma pemisah ribuan; pastikan total_amount adalah INTEGER
 
         Few-shot examples:
     
-        Input: "EXCLSO RBST GOLD 200 \t 1 \t 48200 \t 48,200"
+        Input: "EXCLSO RBST GOLD 200 | 1 | 48200 | 48,200"
         Output: name="EXCLSO RBST GOLD 200", qty=1, price=48200, total_price=48200
     
-        Input: "IDM KTG PLSTK 1W SDG \t 1 \t 200 \t 200"
+        Input: "IDM KTG PLSTK 1W SDG | 1 | 200 | 200"
         Output: name="IDM KTG PLSTK 1W SDG", qty=1, price=200, total_price=200
     
-        Input: "PDULI BNCANA SUMATRA \t 1 \t 300 \t 300"
+        Input: "PDULI BNCANA SUMATRA | 1 | 300 | 300"
         Output: name="PDULI BNCANA SUMATRA", qty=1, price=300, total_price=300
     
-        Input: "RINSO ANTINODA ROSE FRESH 700" "1PCSx \t 24.000= \t 24.000"
+        Input: "RINSO ANTINODA ROSE FRESH 700" / "1PCSx | 24.000= | 24.000"
         Output: name="RINSO ANTINODA ROSE FRESH 700", qty=1, price=24000, total_price=24000
-        Note: "700" di nama produk = ukuran ml, BUKAN harga
+        Note: "700" = ukuran ml, BUKAN harga
 
-    6. DISCOUNT and VOUCHER EXTRACTION:
-        a. Per item: cari "Diskon", "Disc", "Voucher" di bawah item
-        b. Format tanda kurung = pengurangan:
-            "(4,700)" → voucher_amount = 4700  (tanda kurung BUKAN berarti negatif di output) "VOUCHER : (4,700)" → assign ke item DI ATASNYA → voucher_amount = 4700
-        c. Summary: distribusikan proporsional ke semua item
-        d. Tidak ada diskon: discount_type: null, discount_value: 0, voucher_amount: 0
-        e. total_price = (qty * price) - discount_amount - voucher_amount. Contoh: price=31000, qty=1,discount=6100, voucher=2000 → total_price = (1 × 31000) - 6100 - 2000 = 22900
-        JANGAN gunakan angka total dari struk langsung jika ada diskon. Jika tidak sama → cek apakah ada voucher/diskon yang belum di-assign
-
-    FORMAT JSON:
-    {{
-      "receipt_id": "{receipt_id}",
-      "merchant_name": {{"value": "string"}},
-      "date": {{"value": "YYYY-MM-DD or null"}},
-      "time": {{"value": "HH:MM or null"}},
-      "items": [
+        FORMAT JSON:
         {{
-          "name": {{"value": "string"}},
-          "qty": {{"value": int}},
-          "price": {{"value": int}},
-          "total_price": {{"value": int}},
-          "category": {{"value": "string"}},
-          "discount_type": {{"value": "percentage" | "nominal" | null}},
-          "discount_value": {{"value": int}},
-          "voucher_amount": {{"value": int}}
+        "receipt_id": "{receipt_id}",
+        "merchant_name": {{"value": "string"}},
+        "date": {{"value": "YYYY-MM-DD or null"}},
+        "time": {{"value": "HH:MM or null"}},
+        "items": [{{
+        "name": {{"value": "string"}},
+        "qty": {{"value": int}},
+        "price": {{"value": int}},
+        "total_price": {{"value": int}},
+        "category": {{"value": "string"}},
+        "discount_type": {{"value": "percentage"|"nominal"|null}},
+        "discount_value": {{"value": int}},
+        "voucher_amount": {{"value": int}}
+        }}],
+        "total_amount": {{"value": int}}
         }}
-      ],
-      "total_amount": {{"value": int}}
-    }}
 
-    Hanya berikan output JSON mentah tanpa penjelasan.
+        Output JSON saja, tanpa penjelasan.
     """
+
+    # prompt = f"""
+    # Kamu adalah sistem AI ekstraksi data profesional. Gunakan contoh format berikut untuk memproses data baru.
+
+    # OCR:
+    # {input_section}
+
+    # KLASIFIKASI KATEGORI:
+    # {category_examples}
+
+    # FORMAT INPUT OCR:
+    #     - Teks dipisahkan oleh " | " menandakan KOLOM BERBEDA dalam satu baris
+    #     - Format kolom struk: NAMA ITEM | QTY | HARGA_SATUAN | TOTAL
+    #     - Contoh:
+    #         "EXCLSO RBST GOLD 200 | 1 | 48200 | 48,200" → name="EXCLSO RBST GOLD 200", qty=1, price=48200, total_price=48200
+            
+    #         "IDM KTG PLSTK SDG | 1 | 200 | 200" → name="IDM KTG PLSTK SDG", qty=1, price=200, total_price=200. BUKAN price=200200
+  
+    #         "VOUCHER | (4,700)" → assign ke item di atasnya, voucher_amount=4700
+
+    # INSTRUKSI KHUSUS:
+    # 1. MERCHANT_NAME:
+    #     TIER 1 — Known brands (LLM normalize dari training knowledge):
+    #         - Cari nama brand nasional/retail chain yang kamu kenal
+    #         - Normalize OCR noise: "Indesmaret" → "INDOMARET", "ALFMRT" → "ALFAMART"
+    #         - Contoh brands: INDOMARET, ALFAMART, HYPERMART, LAWSON, CIRCLE K, GIANT, HERO, CARREFOUR, TRANSMART, LOTTE MART, YOGYA, dll
+
+    #     TIER 2 — Unknown/local stores:
+    #         - Ambil apa adanya dari OCR, jangan guess atau normalize
+    #         - Gunakan teks paling prominent di area header
+    #         - Jika OCR noise (confidence rendah, karakter aneh), ambil dari footer context
+    #         - JANGAN fabricate nama yang tidak ada di OCR
+    # 2. CURRENCY: Hapus semua titik/koma pemisah ribuan. Pastikan total_amount adalah INTEGER.
+    # 3. TOTAL_AMOUNT: 
+    #     - Setelah extract semua items, hitung manual: sum(qty * price per item)
+    #     - Bandingkan dengan nilai setelah kata "TOTAL", "T O T A L" atau "Total Belanja"
+    #     - Jika TOTAL yang tertulis ≠ sum items → gunakan sum items sebagai total_amount
+    #     - JUMLAH UANG = uang yang dibayar (bukan total belanja)
+    #     - KEMBALI = JUMLAH UANG - TOTAL (kembalian)
+    #     - Cross-check: TOTAL = JUMLAH UANG - KEMBALI
+        
+    # 4. DATE & TIME:
+    #     - Format input: DD/MM/YYYY atau DD-MM-YYYY (Indonesia: hari/bulan/tahun)
+    #     - Posisi tanggal: Footer atau header
+    #     - Penulisan biasanya: Tgl atau date
+    #     - Konversi ke YYYY-MM-DD (ISO 8601)
+    #     - TIME: format HH:MM
+    #     - Jika tidak ditemukan, gunakan null
+    
+    # 5. ITEM PRICE EXTRACTION:
+    #     Format A (Alfamart/Indomaret style):
+    #         NAMA PRODUK    QTY    HARGA_SATUAN    TOTAL
+    #         Contoh: "MMSUKA HOT LAVA 130    1    9500    9,500" → name="MMSUKA HOT LAVA 130", qty=1, price=9500, total=9500
+
+    #     Format B (Warung/kasir style):
+    #         NAMA PRODUK QTYpcs x HARGA = TOTAL
+    #         Contoh: "RINSO ANTINODA\n1PCSx 24.000= 24.000" → name="RINSO ANTINODA", qty=1, price=24000, total=24000
+    #     - Angka di nama produk bukan harga (ukuran/volume: 130ml, 600ml, 700g).
+    #     - Struk warung sering memisahkan ribuan dengan spasi: "3 500" = 3.500 = 3500
+    #     - "7 000" = 7.000 = 7000
+    #     - Jika ada pola "digit spasi 3digit" → gabungkan sebagai satu angka
+    #     - Contoh: "2PCSx 3 500 7 000" → qty=2, price=3500, total=7000
+
+    #     CRITICAL — COLUMN SEPARATION:
+    #         Tab character (\t) atau spasi besar = kolom berbeda
+    #         Format kolom struk: NAMA  \t  QTY  \t  HARGA_SATUAN  \t  TOTAL
+    
+    #     JANGAN gabungkan angka dari kolom berbeda:
+    #         "IDM KTG PLSTK SDG \t 1 \t 200 \t 200" → name="IDM KTG PLSTK SDG", qty=1, price=200, total=200  ✓ BUKAN → price=200200  ✗
+
+    #     Few-shot examples:
+    
+    #     Input: "EXCLSO RBST GOLD 200 \t 1 \t 48200 \t 48,200"
+    #     Output: name="EXCLSO RBST GOLD 200", qty=1, price=48200, total_price=48200
+    
+    #     Input: "IDM KTG PLSTK 1W SDG \t 1 \t 200 \t 200"
+    #     Output: name="IDM KTG PLSTK 1W SDG", qty=1, price=200, total_price=200
+    
+    #     Input: "PDULI BNCANA SUMATRA \t 1 \t 300 \t 300"
+    #     Output: name="PDULI BNCANA SUMATRA", qty=1, price=300, total_price=300
+    
+    #     Input: "RINSO ANTINODA ROSE FRESH 700" "1PCSx \t 24.000= \t 24.000"
+    #     Output: name="RINSO ANTINODA ROSE FRESH 700", qty=1, price=24000, total_price=24000
+    #     Note: "700" di nama produk = ukuran ml, BUKAN harga
+
+    # 6. DISCOUNT and VOUCHER EXTRACTION:
+    #     a. Per item: cari "Diskon", "Disc", "Voucher" di bawah item
+    #     b. Format tanda kurung = pengurangan:
+    #         "(4,700)" → voucher_amount = 4700  (tanda kurung BUKAN berarti negatif di output) "VOUCHER : (4,700)" → assign ke item DI ATASNYA → voucher_amount = 4700
+    #     c. Summary: distribusikan proporsional ke semua item
+    #     d. Tidak ada diskon: discount_type: null, discount_value: 0, voucher_amount: 0
+    #     e. total_price = (qty * price) - discount_amount - voucher_amount. Contoh: price=31000, qty=1,discount=6100, voucher=2000 → total_price = (1 × 31000) - 6100 - 2000 = 22900
+    #     JANGAN gunakan angka total dari struk langsung jika ada diskon. Jika tidak sama → cek apakah ada voucher/diskon yang belum di-assign
+
+    # FORMAT JSON:
+    # {{
+    #   "receipt_id": "{receipt_id}",
+    #   "merchant_name": {{"value": "string"}},
+    #   "date": {{"value": "YYYY-MM-DD or null"}},
+    #   "time": {{"value": "HH:MM or null"}},
+    #   "items": [
+    #     {{
+    #       "name": {{"value": "string"}},
+    #       "qty": {{"value": int}},
+    #       "price": {{"value": int}},
+    #       "total_price": {{"value": int}},
+    #       "category": {{"value": "string"}},
+    #       "discount_type": {{"value": "percentage" | "nominal" | null}},
+    #       "discount_value": {{"value": int}},
+    #       "voucher_amount": {{"value": int}}
+    #     }}
+    #   ],
+    #   "total_amount": {{"value": int}}
+    # }}
+
+    # Hanya berikan output JSON mentah tanpa penjelasan.
+    # """
 
     try:
         logger.info(f"Sending to LLM for receipt: {receipt_id}")
@@ -1031,8 +1297,8 @@ async def refine_receipt(raw_text: str, ocr_boxes: list = None):
             prompt=prompt,
             format="json",
             options={
-                "temperature": 0.1,
-                "top_k": 30,
+                "temperature": 0.1,  # deterministic for data extraction
+                "top_k": 20,
                 "top_p": 0.6,
             }
         )
@@ -1046,8 +1312,7 @@ async def refine_receipt(raw_text: str, ocr_boxes: list = None):
             scoring = determine_receipt_status(response_data, boxes_for_scoring)
 
             logger.info(f"Receipt {receipt_id} status: {scoring['status']}")
-            print(response_data)
-            print(f"input section {input_section}")
+            logger.debug(f"LLM input section:\n{input_section}")
 
             return {
                 "receipt_data": response_data,

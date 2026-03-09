@@ -60,11 +60,23 @@ async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         ocr_result = await ocr_image(file_path)
 
         if not ocr_result.boxes:
-            await update.message.reply_text('Sorry, the OCR process failed. Please try again with a clearer image.')
+            quality_warning = ""
+            if ocr_result.quality_issues:
+                issue_map = {
+                    "blurry": "image is blurry",
+                    "too_dark": "image is too dark",
+                    "too_bright": "image is too bright",
+                    "low_contrast": "image has low contrast",
+                    "receipt_too_small": "receipt fills less than 30% of the frame",
+                }
+                reasons = ", ".join(issue_map.get(i, i) for i in ocr_result.quality_issues)
+                quality_warning = f" ({reasons})"
+            await update.message.reply_text(
+                f'Sorry, could not read any text from the image{quality_warning}. '
+                'Please try again with a clearer, well-lit photo.'
+            )
         else:
             await update.message.reply_text("Refining extracted data...")
-            # asyncio.create_task(update.message.reply_text(f"OCR Result:\n{raw_text}"))
-            
             await background_refine(update, ocr_result, file_path)
     
     except Exception as e:
