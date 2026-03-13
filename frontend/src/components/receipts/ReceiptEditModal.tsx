@@ -61,10 +61,10 @@ export const ReceiptEditModal = ({
   isReadOnly = false,
 }: ReceiptEditModalProps) => {
   const [editedReceipt, setEditedReceipt] = useState<UserReceipts>(receipt);
-  const [zoomLevel, setZoomLevel] = useState(1);
-  const [panPosition, setPanPosition] = useState({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  // const [zoomLevel, setZoomLevel] = useState(1);
+  // const [panPosition, setPanPosition] = useState({ x: 0, y: 0 });
+  // const [isDragging, setIsDragging] = useState(false);
+  // const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -109,8 +109,8 @@ export const ReceiptEditModal = ({
 
   if (!isOpen) return null;
 
-  const handleZoomIn = () => setZoomLevel((prev) => Math.min(prev + 0.5, 3));
-  const handleZoomOut = () => setZoomLevel((prev) => Math.max(prev - 0.5, 1));
+  // const handleZoomIn = () => setZoomLevel((prev) => Math.min(prev + 0.5, 3));
+  // const handleZoomOut = () => setZoomLevel((prev) => Math.max(prev - 0.5, 1));
 
   const summary = calculateReceiptSummary(editedReceipt.receipt_items);
   const itemsTotal = summary.total;
@@ -304,9 +304,9 @@ export const ReceiptEditModal = ({
       {/* Main Content - Split or Scrollable */}
       <div className="flex-1 overflow-y-auto bg-[#0b0e11] relative">
         {/* Image Section — only shown for action-required (editing mode) */}
-        {!isReadOnly && (
+        {/* {!isReadOnly && (
           <div className="h-75 bg-[#1a2129] relative overflow-hidden group shrink-0">
-            {/* Mock Receipt Image */}
+
             <div
               className="w-full h-full flex items-center justify-center cursor-move"
               style={{
@@ -336,12 +336,12 @@ export const ReceiptEditModal = ({
                 alt="Receipt"
                 className="max-w-none w-auto h-auto min-w-50 object-contain opacity-80"
               />
-              {/* Mock Overlay Box */}
+
               <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 border-2 border-yellow-500 bg-yellow-500/10 w-48 h-24 rounded pointer-events-none" />
-            </div>
+            </div> */}
 
             {/* Image Controls */}
-            <div className="absolute bottom-4 right-4 flex flex-col gap-2">
+            {/* <div className="absolute bottom-4 right-4 flex flex-col gap-2">
               <Button
                 size="icon"
                 variant="secondary"
@@ -358,13 +358,13 @@ export const ReceiptEditModal = ({
               >
                 <div className="h-0.5 w-4 bg-white" />
               </Button>
-            </div>
+            </div> */}
 
-            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-              {/* Simple visual cue for low confidence if needed */}
-            </div>
-          </div>
-        )}
+            {/* <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+
+            </div> */}
+          {/* </div> */}
+        {/* )} */}
 
         {/* Drag Handle for Bottom Sheet look */}
         <div
