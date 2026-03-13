@@ -10,9 +10,9 @@ import { setToken } from "@/lib/auth";
 // import { transformCategoryData } from "@/utils/categoryHelpers";
 
 // import { useQuery } from "@tanstack/react-query";
-import { Bell, Search, TrendingUp, X } from "lucide-react";
+import { Bell, TrendingUp } from "lucide-react";
 import { Card, CardContent } from "./ui/card";
-import { Input } from "./ui/input";
+// import { Input } from "./ui/input";
 import { Button } from "./ui/button";
 // import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { Badge } from "./ui/badge";
@@ -179,7 +179,7 @@ export const Dashboard = () => {
 };
 
 const UserDashboard = () => {
-  const [searchOpen, setSearchOpen] = useState(false);
+  // const [searchOpen, setSearchOpen] = useState(false);
   const [userReceipts, setUserReceipts] = useState<string | null>(null);
   const [userReceiptsItem, setUserReceiptsItem] = useState<UserReceipts[]>([]);
   const [telegramUserProfile, setTelegramUserProfile] =
@@ -379,14 +379,14 @@ const UserDashboard = () => {
           </div>
         </div>
         <div className="flex items-center gap-1">
-          <Button
+          {/* <Button
             variant="ghost"
             size="icon"
             className="text-gray-300 hover:text-white"
             onClick={() => setSearchOpen(!searchOpen)}
           >
             <Search className="h-5 w-5" />
-          </Button>
+          </Button> */}
           <Button
             variant="ghost"
             size="icon"
@@ -398,7 +398,7 @@ const UserDashboard = () => {
       </div>
 
       {/* Collapsible Search Bar */}
-      {searchOpen && (
+      {/* {searchOpen && (
         <div className="px-4 pb-4 animate-in slide-in-from-top-2 duration-200">
           <div className="relative flex items-center">
             <Search className="absolute left-3 h-4 w-4 text-gray-400" />
@@ -418,7 +418,7 @@ const UserDashboard = () => {
             </Button>
           </div>
         </div>
-      )}
+      )} */}
 
       {/* Stats Card */}
       <div className="px-4 pb-4">
