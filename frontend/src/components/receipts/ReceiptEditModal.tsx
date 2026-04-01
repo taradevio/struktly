@@ -850,7 +850,7 @@ export const ReceiptEditModal = ({
       </div>
 
       {/* Footer Actions */}
-      <div className="p-4 bg-[#0f1419] border-t border-gray-800 shrink-0 mb-20 space-y-3">
+      <div className="p-4 bg-[#0f1419] border-t border-gray-800 shrink-0 mb-10 space-y-3">
         {isReadOnly && !isEditable ? (
           <div className="w-full" />
         ) : isEditable ? (
