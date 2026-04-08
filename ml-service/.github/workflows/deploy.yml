@@ -30,6 +30,7 @@ jobs:
             docker rm ml-service || true
             docker run -d --name ml-service -p 8000:8000 \
               --env-file .env \
+              -v rapidocr_models:/home/user/.cache \
               --restart unless-stopped \
               struktly-ml
 
