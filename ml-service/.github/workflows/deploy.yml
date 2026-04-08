@@ -22,8 +22,9 @@ jobs:
           username: ${{ secrets.ML_SERVICE_USER }}
           key: ${{ secrets.ML_SERVICE_SSH_KEY }}
           script: |
-            cd ~/ml-service
+            cd ~/struktly
             git pull origin main
+            cd ml-service
             docker build -t struktly-ml .
             docker stop ml-service || true
             docker rm ml-service || true
