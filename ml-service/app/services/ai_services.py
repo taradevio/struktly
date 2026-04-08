@@ -281,6 +281,7 @@ import uuid
 import os
 import re
 from ollama import AsyncClient
+from datetime import datetime
 from app.services.validation import (
     is_valid_ocr_text,
     determine_receipt_status,
@@ -623,38 +624,58 @@ def build_llm_input_with_coords(ocr_boxes: list[dict]) -> str:
 
     return "\n".join(lines)
 
-def build_llm_input(ocr_boxes: list) -> str:
-    """
-    Zone-filter + reconstruct lines specifically for LLM consumption.
-    Skip header noise, skip low-confidence boxes, skip footer.
-    """
-    # from app.services.ocr_services import OCRBox, reconstruct_lines
+# def build_llm_input(ocr_boxes: list) -> str:
+#     """
+#     Zone-filter + reconstruct lines specifically for LLM consumption.
+#     Skip header noise, skip low-confidence boxes, skip footer.
+#     """
+#     # from app.services.ocr_services import OCRBox, reconstruct_lines
 
-    avg_conf = sum(b["confidence"] for b in ocr_boxes) / len(ocr_boxes)
-    conf_threshold = 0.7 if avg_conf >= 0.75 else 0.5
+#     avg_conf = sum(b["confidence"] for b in ocr_boxes) / len(ocr_boxes)
+#     conf_threshold = 0.7 if avg_conf >= 0.75 else 0.5
     
+#     filtered = [
+#         b for b in ocr_boxes
+#         if b["confidence"] >= conf_threshold
+#         and len(b["text"].strip()) >= 1
+#         and not re.match(r'^[.,\-]+$', b["text"].strip())
+#     ]
+
+#     logger.debug(f"OCR avg confidence: {avg_conf:.3f} → threshold: {conf_threshold}")
+
+#     item_zone_start, footer_zone_start = find_zone_boundaries(filtered)
+
+
+#     # Split into zones
+#     header_boxes = [b for b in filtered if b["y"] < item_zone_start]
+#     body_boxes   = [b for b in filtered if item_zone_start <= b["y"] < footer_zone_start]
+    
+#     header_text = merge_spaced_numbers(reconstruct_lines(header_boxes))
+#     body_text   = fix_fragmented_numbers(reconstruct_lines(body_boxes))
+#     raw_coords = build_llm_input_with_coords(ocr_boxes)
+
+
+#     return f"=== Header === \n{header_text}\n\n === Body === \n{body_text}\n\n === Raw Coordinate ===\n{raw_coords}"
+
+def build_llm_input(ocr_boxes: list[dict]) -> str:
     filtered = [
         b for b in ocr_boxes
-        if b["confidence"] >= conf_threshold
-        and len(b["text"].strip()) >= 1
-        and not re.match(r'^[.,\-]+$', b["text"].strip())
+        if b.get("confidence", 0) >= 0.6
+        and len(b.get("text", "").strip()) > 1
     ]
-
-    logger.debug(f"OCR avg confidence: {avg_conf:.3f} → threshold: {conf_threshold}")
-
-    item_zone_start, footer_zone_start = find_zone_boundaries(filtered)
-
-
-    # Split into zones
-    header_boxes = [b for b in filtered if b["y"] < item_zone_start]
-    body_boxes   = [b for b in filtered if item_zone_start <= b["y"] < footer_zone_start]
     
-    header_text = merge_spaced_numbers(reconstruct_lines(header_boxes))
-    body_text   = fix_fragmented_numbers(reconstruct_lines(body_boxes))
-    raw_coords = build_llm_input_with_coords(ocr_boxes)
-
-
-    return f"=== Header === \n{header_text}\n\n === Body === \n{body_text}\n\n === Raw Coordinate ===\n{raw_coords}"
+    # Sort top→bottom
+    filtered.sort(key=lambda b: (b["y"], b["x"]))
+    
+    lines = []
+    for b in filtered:
+        x    = int(b["x"])
+        y    = int(b["y"])
+        w    = int(b.get("width", 0))
+        text = b["text"].strip()
+        lines.append(f"[x={x} y={y} w={w}] {text}")
+    
+    return "\n".join(lines)
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 # ── Valid categories (must match frontend CATEGORY_CONFIG) ─────────────────────
@@ -774,6 +795,13 @@ def get_category_prompt(items_text: str) -> str:
         Jika item tidak cocok dengan kategori manapun → gunakan "Others".
         JANGAN buat kategori baru di luar daftar di atas."""
 
+async def get_current_time():
+    now = datetime.now()
+    return now.strftime("%H:%M")
+
+async def get_current_date():
+    now = datetime.now()
+    return now.strftime("%Y-%m-%d")
 
 # ── Main LLM function ──────────────────────────────────────────────────────────
 async def refine_receipt(raw_text: str, ocr_boxes: list = None):
@@ -804,7 +832,7 @@ async def refine_receipt(raw_text: str, ocr_boxes: list = None):
     #     input_section = f"DATA OCR:\n{raw_text}"
 
     if ocr_boxes:
-        structured = build_llm_input(ocr_boxes)  # zone-filtered + column separators
+        structured = build_llm_input(ocr_boxes)
         input_section = (
             f"{structured}\n\n"
             f"=== FULL RECONSTRUCTED TEXT (all lines, no filtering) ===\n"
@@ -843,7 +871,7 @@ async def refine_receipt(raw_text: str, ocr_boxes: list = None):
             - Format Indonesia: DD/MM/YYYY atau DD-MM-YYYY (hari/bulan/tahun, BUKAN bulan/hari)
             - Konversi ke YYYY-MM-DD (ISO 8601). Contoh: "09/03/2026", "09.03.26" → "2026-03-09"
             - TIME: format HH:MM. Contoh: "Jam :10:57" → "10:57", "10.57" → "10:57"
-            - Jika tidak ditemukan date/time, gunakan waktu sekarang
+            - Jika tidak ditemukan date/time, gunakan waktu dan tanggal sekarang
 
         3. ITEMS — FORMAT KOLOM:
            Input pakai " | " sebagai pemisah kolom. Format: NAMA | QTY | HARGA | TOTAL
@@ -906,7 +934,22 @@ async def refine_receipt(raw_text: str, ocr_boxes: list = None):
     
         Input: "PDULI BNCANA SUMATRA | 1 | 300 | 300"
         Output: name="PDULI BNCANA SUMATRA", qty=1, price=300, total_price=300
-    
+
+        Input: "VOUCHER | (4,700)"
+        Output: voucher_amount=4700, assign ke item di atasnya
+
+        Input: "DISKON | (4,700)"
+        Output: discount_value=4700, assign ke item di atasnya
+
+        Input: "26.03. 26-12:09/4.1.10/F0IH-72314/AMEL1/02"
+        Output: date="2026-03-26", time="12:09"
+
+        Input: "Tgl : 09/03/2026 10:57:16 V.2025.11.6"
+        Output: date="2026-03-09", time="10:57"
+
+        Input: "Time: None, null | Date: None, null"
+        Output: time={get_current_time}, date={get_current_date}
+
         Input: "RINSO ANTINODA ROSE FRESH 700" / "1PCSx | 24.000= | 24.000"
         Output: name="RINSO ANTINODA ROSE FRESH 700", qty=1, price=24000, total_price=24000
         Note: "700" = ukuran ml, BUKAN harga
@@ -1058,9 +1101,9 @@ async def refine_receipt(raw_text: str, ocr_boxes: list = None):
             prompt=prompt,
             format="json",
             options={
-                "temperature": 0.25,  # deterministic for data extraction
-                "top_k": 30,
-                "top_p": 0.7,
+                "temperature": 0.25,
+                "top_k": 35,
+                "top_p": 0.8,
             }
         )
 
@@ -1071,6 +1114,7 @@ async def refine_receipt(raw_text: str, ocr_boxes: list = None):
             # ── Use REAL confidence from RapidOCR, not LLM ────────────────
             boxes_for_scoring = ocr_boxes or []
             scoring = determine_receipt_status(response_data, boxes_for_scoring)
+            print(f"response data: {response_data}")
 
             # logger.info(f"Receipt {receipt_id} status: {scoring['status']}")
             # logger.debug(f"LLM input section:\n{input_section}")

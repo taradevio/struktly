@@ -3,6 +3,7 @@ import logging
 import httpx
 import asyncio
 import cv2
+import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks, Request
 from telegram import Update
@@ -51,6 +52,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text('Processing your receipt image...')
+    start_time = time.time()
+
     photo_file = await update.message.photo[-1].get_file()
     file_path = f"temp_receipt_{photo_file.file_id}.jpg"
     await photo_file.download_to_drive(file_path)
@@ -77,14 +80,14 @@ async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYP
             )
         else:
             await update.message.reply_text("Refining extracted data...")
-            await background_refine(update, ocr_result, file_path)
+            await background_refine(update, ocr_result, file_path, start_time)
     
     except Exception as e:
         logger.error(f"Error processing receipt image: {e}")
         await update.message.reply_text('Sorry, an error occurred while processing your receipt image.')
 
     
-async def background_refine(update, ocr_result, file_path):
+async def background_refine(update, ocr_result, file_path, start_time):
     # img = cv2.imread(file_path)
     # img_height = img.shape[0] if img is not None else 0
     ocr_boxes=[
@@ -122,7 +125,7 @@ async def background_refine(update, ocr_result, file_path):
     store_name = receipt_data.get("merchant_name", {}).get("value", "N/A")
     total_amount = receipt_data.get("total_amount", {}).get("value", 0)
     date = receipt_data.get("date", {}).get("value", "N/A")
-    time = receipt_data.get("time", {}).get("value", "N/A")
+    receipt_time = receipt_data.get("time", {}).get("value", "N/A")
     items = [
         {
             "name": item.get("name", {}).get("value", "N/A"),
@@ -149,7 +152,7 @@ async def background_refine(update, ocr_result, file_path):
             "merchant_name": store_name,
             "total_amount": total_amount,
             "date": date,
-            "time": time,
+            "receipt_time": receipt_time,
             "items": items,
             "status": status,
             "low_confidence_fields": low_confidence_fields
@@ -175,6 +178,9 @@ async def background_refine(update, ocr_result, file_path):
             if response.status_code == 200:
                 hono_data = response.json()
                 db_id = hono_data.get("receipt_id", "N/A")
+                duration = time.time() - start_time
+                logger.info(f"End-to-end processing: {duration:.2f}s for receipt: {db_id}")
+
                 logger.info(f"Successfully stored receipt data in backend with ID: {db_id}")
             else:
                 logger.error(f"Failed to store receipt data in backend. Status code: {response.status_code}, Response: {response.text}")

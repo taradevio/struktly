@@ -454,6 +454,22 @@ def reconstruct_lines(boxes: list[OCRBox], y_tolerance: int = None) -> str:
 
     return "\n".join(lines)
 
+def should_preprocess(img) -> bool:
+    """
+    Decide apakah OpenCV preprocessing perlu dijalankan.
+    Skip kalau gambar udah bagus.
+    """
+    quality = assess_image_quality(img)
+    
+    # Kalau gambar udah bagus, skip preprocessing
+    # RapidOCR internal pipeline lebih reliable untuk clean images
+    if (quality["blur_score"] > 200 and 
+        100 < quality["brightness"] < 200 and
+        quality["contrast"] > 50):
+        return False
+    
+    return True
+
 async def ocr_image(image_path: str) -> OCRResult:
     """
     Returns structured OCRResult with per-box confidence scores.
@@ -484,47 +500,76 @@ async def ocr_image(image_path: str) -> OCRResult:
             if quality_issues:
                 logger.warning(f"Image quality issues detected: {quality_issues} — attempting OCR anyway")
 
-            # ── Step 1: Perspective correction ────────────────────────────
-            img_corrected = correct_perspective(img)
-            cv2.imwrite("debug_perspective.jpg", img_corrected)
+            if should_preprocess(img):
+                logger.info("Applying OpenCV preprocessing")
+                img_corrected = correct_perspective(img)
+                cv2.imwrite("debug_perspective.jpg", img_corrected)
+                img_crop = crop_receipt(img_corrected)
+                cv2.imwrite("debug_cropped_image.jpg", img_crop)
+                gray = img_crop[:, :, 1]
+                gray = cv2.cvtColor(img_crop, cv2.COLOR_BGR2GRAY)
+                cv2.imwrite("debug_gray.jpg", gray)
+                gray = check_and_fix_inversion(gray)
+                cv2.imwrite("debug_inversion_fixed.jpg", gray)
+                denoised = cv2.fastNlMeansDenoising(gray, h=15)
+                cv2.imwrite("debug_denoised.jpg", denoised)
+                clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+                enhanced = clahe.apply(denoised)
+                cv2.imwrite("desbug_enhanced.jpg", enhanced)
+                deskewed = deskew(enhanced)
+                print(f"deskewed: {deskewed}")
+                cv2.imwrite("debug_deskewed.jpg", deskewed)
+                result = engine(deskewed)
+                boxes = _parse_ocr_result(result)
+                print(f"boxes: {boxes}")
+            else:
+                logger.info("Skipping preprocessing")
+                result = engine(img)
+                boxes = _parse_ocr_result(result)
+                print(f"boxes: {boxes}")
 
-            # ── Step 2: Crop to receipt area ───────────────────────────────
-            # img_corrected is the perspective-fixed image, or the original if
-            # the fix produced a fragment smaller than 50% of the frame.
-            img_crop = crop_receipt(img_corrected)
-            cv2.imwrite("debug_cropped_image.jpg", img_crop)
+            # # ── Step 1: Perspective correction ────────────────────────────
+            # img_corrected = correct_perspective(img)
+            # cv2.imwrite("debug_perspective.jpg", img_corrected)
 
-            gray = img_crop[:, :, 1] 
-            # ── Step 3: Grayscale ──────────────────────────────────────────
-            gray = cv2.cvtColor(img_crop, cv2.COLOR_BGR2GRAY)
-            print(f"img_crop shape: {img_crop.shape}")  # harusnya (h, w, 3)
-            print(f"img_crop dtype: {img_crop.dtype}")
-            cv2.imwrite("debug_gray.jpg", gray)
+            # # ── Step 2: Crop to receipt area ───────────────────────────────
+            # # img_corrected is the perspective-fixed image, or the original if
+            # # the fix produced a fragment smaller than 50% of the frame.
+            # img_crop = crop_receipt(img_corrected)
+            # cv2.imwrite("debug_cropped_image.jpg", img_crop)
 
-            # ── Step 4: Fix inverted thermal receipts (white-on-dark) ──────
-            gray = check_and_fix_inversion(gray)
+            # gray = img_crop[:, :, 1] 
+            # # ── Step 3: Grayscale ──────────────────────────────────────────
+            # gray = cv2.cvtColor(img_crop, cv2.COLOR_BGR2GRAY)
+            # print(f"img_crop shape: {img_crop.shape}")  # harusnya (h, w, 3)
+            # print(f"img_crop dtype: {img_crop.dtype}")
+            # cv2.imwrite("debug_gray.jpg", gray)
 
-            # ── Step 5: Denoise ────────────────────────────────────────────
-            denoised = cv2.fastNlMeansDenoising(gray, h=15)
-            cv2.imwrite("debug_denoised.jpg", denoised)
+            # # ── Step 4: Fix inverted thermal receipts (white-on-dark) ──────
+            # gray = check_and_fix_inversion(gray)
+            # cv2.imwrite("debug_inversion_fixed.jpg", gray)
 
-            # ── Step 6: CLAHE contrast enhancement ────────────────────────
-            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-            # cv2.imwrite("debug_clahe.jpg", clahe)
-            enhanced = clahe.apply(denoised)
-            cv2.imwrite("desbug_enhanced.jpg", enhanced)
+            # # ── Step 5: Denoise ────────────────────────────────────────────
+            # denoised = cv2.fastNlMeansDenoising(gray, h=15)
+            # cv2.imwrite("debug_denoised.jpg", denoised)
 
-            # ── Step 7: Deskew ─────────────────────────────────────────────
-            deskewed = deskew(enhanced)
-            print(f"deskewed: {deskewed}")
-            cv2.imwrite("debug_deskewed.jpg", deskewed)
+            # # ── Step 6: CLAHE contrast enhancement ────────────────────────
+            # clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+            # # cv2.imwrite("debug_clahe.jpg", clahe)
+            # enhanced = clahe.apply(denoised)
+            # cv2.imwrite("desbug_enhanced.jpg", enhanced)
 
-            # ── Step 8: Run OCR ────────────────────────────────────────────
-            result = engine(deskewed)
+            # # ── Step 7: Deskew ─────────────────────────────────────────────
+            # deskewed = deskew(enhanced)
+            # print(f"deskewed: {deskewed}")
+            # cv2.imwrite("debug_deskewed.jpg", deskewed)
 
-            # ── Step 9: Parse boxes ────────────────────────────────────────
-            boxes = _parse_ocr_result(result)
-            print(f"boxes: {boxes}")
+            # # ── Step 8: Run OCR ────────────────────────────────────────────
+            # result = engine(deskewed)
+
+            # # ── Step 9: Parse boxes ────────────────────────────────────────
+            # boxes = _parse_ocr_result(result)
+            # print(f"boxes: {boxes}")
 
             if not boxes:
                 logger.warning(f"No text detected in: {image_path}")

@@ -284,7 +284,7 @@ export const ReceiptEditModal = ({
               </Button>
 
               {isMenuOpen && (
-                <div className="absolute border-4 border-yellow-300 right-0 top-12 w-48 bg-[#1a2129] rounded-xl shadow-2xl z-20 py-1 animate-in fade-in zoom-in-95 duration-100">
+                <div className="absolute border border-gray-800 right-0 top-12 w-48 bg-[#1a2129] rounded-xl shadow-2xl z-20 py-1 animate-in fade-in zoom-in-95 duration-100">
                   <button
                     onClick={() => {
                       setIsMenuOpen(false);
@@ -850,7 +850,7 @@ export const ReceiptEditModal = ({
       </div>
 
       {/* Footer Actions */}
-      <div className="p-4 bg-[#0f1419] border-t border-gray-800 shrink-0 mb-10 space-y-3">
+      <div className="p-4 bg-[#0f1419] border-t border-gray-800 shrink-0 mb-15 space-y-3">
         {isReadOnly && !isEditable ? (
           <div className="w-full" />
         ) : isEditable ? (
