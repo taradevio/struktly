@@ -77,9 +77,13 @@ export const RecentActivityList = ({
     const yesterday = new Date(now);
     yesterday.setDate(now.getDate() - 1);
     const yesterdayStr = yesterday.toDateString();
+    const thisMonth = now.getMonth();
+    const thisYear = now.getFullYear();
 
     receipts.forEach((receipt) => {
-      const date = new Date(receipt.receipt_items[0]?.created_at || receipt.transaction_date);
+      const date = new Date(
+        receipt.receipt_items[0]?.created_at || receipt.transaction_date,
+      );
       const dateStr = date.toDateString();
       let groupKey = "";
 
@@ -87,6 +91,11 @@ export const RecentActivityList = ({
         groupKey = "TODAY";
       } else if (dateStr === yesterdayStr) {
         groupKey = "YESTERDAY";
+      } else if (
+        date.getMonth() === thisMonth &&
+        date.getFullYear() === thisYear
+      ) {
+        groupKey = "THIS MONTH";
       } else {
         groupKey = date
           .toLocaleDateString("en-US", {
