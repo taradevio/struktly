@@ -6,7 +6,7 @@ import {
   useQuery,
 } from "@tanstack/react-query";
 import { formattedRupiah } from "@/utils/currency";
-import { setToken } from "@/lib/auth";
+import { setToken, getToken } from "@/lib/auth";
 // import { transformCategoryData } from "@/utils/categoryHelpers";
 
 // import { useQuery } from "@tanstack/react-query";
@@ -58,12 +58,12 @@ interface UserReceipts {
 
 const queryClient = new QueryClient();
 
-const chartData = [
-  { week: "Week 1", spending: 450, budget: 750, predicted: null },
-  { week: "Week 2", spending: 520, budget: 750, predicted: null },
-  { week: "Week 3", spending: 680, budget: 750, predicted: 680 },
-  { week: "Week 4", spending: null, budget: 750, predicted: 800 },
-];
+interface ChartDataPoint {
+  week: string;
+  spending: number | null;
+  budget: number;
+  predicted: number | null;
+}
 
 // const storeData = [
 //   {
@@ -185,6 +185,7 @@ const UserDashboard = () => {
   const [telegramUserProfile, setTelegramUserProfile] =
     useState<TelegramUser | null>(null);
   const [photoUrl, SetPhotoUrl] = useState<string | null>(null);
+  const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   // const [isLoading, setIsLoading] = useState(true);
   const [focusedData, setFocusedData] = useState<{
     week: string;
@@ -271,6 +272,82 @@ const UserDashboard = () => {
       // console.log("telegramUser:", telegramUserProfile);
     }
   }, [data]);
+
+  // Fetch chart outcome data from receipts
+  const { data: receiptsData, isLoading: chartLoading } = useQuery({
+    queryKey: ["receipts", data?.accessToken],
+    queryFn: async () => {
+      const token = await getToken();
+      if (!token) throw new Error("No token available");
+
+      const res = await fetch(`${BACKEND_URL}/api/receipts`, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        credentials: "include",
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
+    enabled: !!data?.accessToken,
+    refetchInterval: 60000, // Refetch every minute
+  });
+
+  // Aggregate receipts into weekly chart data
+  useEffect(() => {
+    if (receiptsData?.receipts) {
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const WEEKLY_BUDGET = 750;
+
+      const weeklyData: Record<
+        number,
+        { week: string; spending: number; budget: number; predicted: number | null }
+      > = {};
+
+      receiptsData.receipts.forEach((receipt: any) => {
+        const date = new Date(receipt.transaction_date);
+        
+        // Only include receipts from current month
+        if (date < monthStart) return;
+
+        const weekNumber = Math.floor(
+          (date.getDate() - date.getDay() + 6) / 7
+        );
+        const weekKey = weekNumber;
+
+        if (!weeklyData[weekKey]) {
+          weeklyData[weekKey] = {
+            week: `Week ${weekKey + 1}`,
+            spending: 0,
+            budget: WEEKLY_BUDGET,
+            predicted: null,
+          };
+        }
+
+        weeklyData[weekKey].spending += receipt.total_amount || 0;
+      });
+
+      // Calculate predictions for last week
+      const weeks = Object.values(weeklyData).sort((a, b) => {
+        const aNum = parseInt(a.week.split(" ")[1]);
+        const bNum = parseInt(b.week.split(" ")[1]);
+        return aNum - bNum;
+      });
+
+      if (weeks.length >= 2) {
+        const lastWeek = weeks[weeks.length - 1];
+        const prevWeek = weeks[weeks.length - 2];
+        const avgSpending = (lastWeek.spending + prevWeek.spending) / 2;
+        lastWeek.predicted = Math.round(avgSpending);
+      }
+
+      setChartData(weeks);
+    }
+  }, [receiptsData]);
 
   // const groupedStores = useMemo(() => {
   //   const storeMap = userReceipts.reduce((acc, item) => {
@@ -424,7 +501,7 @@ const UserDashboard = () => {
       <div className="px-4 pb-4">
         <Card className="bg-[#1a2129] border-none rounded-2xl overflow-hidden text-white">
           <CardContent className="p-5">
-            {isLoading ? (
+            {isLoading || chartLoading ? (
               <div className="space-y-4">
                 <div className="flex justify-between">
                   <Skeleton className="h-10 w-32 bg-gray-700" />
