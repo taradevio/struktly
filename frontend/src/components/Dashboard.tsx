@@ -452,7 +452,7 @@ const UserDashboard = () => {
                   </div>
                   <div className="text-right">
                     <p className="text-xs text-gray-300 mb-1">Total Spent</p>
-                    <span className="text-2xl font-bold">$2,450.00</span>
+                    <span className="text-2xl font-bold">Rp2,450.00</span>
                   </div>
                 </div>
 
@@ -464,7 +464,7 @@ const UserDashboard = () => {
                   <p className="text-sm text-gray-300">
                     Your spending is{" "}
                     <span className="text-red-400 font-medium">
-                      $121.50 higher
+                      Rp121.50 higher
                     </span>{" "}
                     than the same time last month.
                   </p>
@@ -486,7 +486,7 @@ const UserDashboard = () => {
                           {focusedData.week}
                         </span>
                         <span className="mx-1">
-                          Actual: ${focusedData.spending ?? "-"}
+                          Actual: Rp{focusedData.spending ?? "-"}
                         </span>
                         <span className="mx-1 opacity-70">
                           / Budget: ${focusedData.budget}
