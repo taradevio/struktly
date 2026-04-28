@@ -79,7 +79,7 @@ export const RecentActivityList = ({
     const yesterdayStr = yesterday.toDateString();
 
     receipts.forEach((receipt) => {
-      const date = new Date(receipt.transaction_date);
+      const date = new Date(receipt.receipt_items[0]?.created_at || receipt.transaction_date);
       const dateStr = date.toDateString();
       let groupKey = "";
 
