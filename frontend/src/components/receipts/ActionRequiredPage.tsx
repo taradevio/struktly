@@ -140,7 +140,7 @@ const ActionRequiredListItem = ({
   const dateLabel = "Today"; // Simple for mock
   const timeLabel = date.toLocaleTimeString("en-US", {
     hour: "numeric",
-    minute: "2-digit",
+    minute: "numeric",
     hour12: false,
   });
 
