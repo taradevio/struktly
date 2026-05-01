@@ -136,7 +136,7 @@ const ActionRequiredListItem = ({
   receipt,
   onReview,
 }: ActionRequiredListItemProps) => {
-  const date = new Date(receipt.receipt_items[0]?.created_at || receipt.transaction_date);
+  const date = new Date(receipt.transaction_date);
   const dateLabel = "Today"; // Simple for mock
   const timeLabel = date.toLocaleTimeString("en-US", {
     hour: "numeric",

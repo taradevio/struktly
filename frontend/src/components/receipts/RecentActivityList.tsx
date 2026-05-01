@@ -139,7 +139,7 @@ export const RecentActivityList = ({
             </div>
             <div className="space-y-3">
               {items.map((receipt) => {
-                const date = new Date(receipt.receipt_items[0]?.created_at || receipt.transaction_date);
+                const date = new Date(receipt.transaction_date);
                 const timeLabel = date.toLocaleTimeString("en-US", {
                   weekday: "long",
                   year: "numeric",
