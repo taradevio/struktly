@@ -32,7 +32,7 @@ class ReceiptData(BaseModel):
     items: list
     date: str
     price: float
-    time: str
+    receipt_time: str
     total_amount: float
     category: str
     status: str
@@ -124,6 +124,9 @@ async def background_refine(update, ocr_result, file_path, start_time):
     total_amount = receipt_data.get("total_amount", {}).get("value", 0)
     date = receipt_data.get("date", {}).get("value", "N/A")
     receipt_time = receipt_data.get("time", {}).get("value", "N/A")
+    
+    logger.info(f"Extracted receipt data: date={date}, time={receipt_time}, store={store_name}, total={total_amount}")
+    
     items = [
         {
             "name": item.get("name", {}).get("value", "N/A"),

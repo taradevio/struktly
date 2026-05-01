@@ -68,11 +68,19 @@ app.post("/process-receipt", async (c) => {
     }
 
     const dateStr = payloadData.receipt.date;
-    const timeStr = payloadData.receipt.time;
+    const timeStr = payloadData.receipt.receipt_time;
 
-    const safeTime = timeStr ? timeStr : "00:00:00";
+    console.log("Received date and time:", { dateStr, timeStr });
+
+    // Validate time format (HH:MM or HH:MM:SS)
+    const isValidTime = timeStr && /^\d{2}:\d{2}(:\d{2})?$/.test(timeStr);
+    const safeTime = isValidTime ? timeStr : "00:00:00";
+
+    console.log("Final time used:", { safeTime, isValidTime });
 
     const transactionDate = new Date(`${dateStr}T${safeTime}`).toISOString();
+    
+    console.log("Final transaction_date ISO:", transactionDate);
 
     const statusValid = ["VERIFIED", "ACTION_REQUIRED", "FAILED"];
     const status = statusValid.includes(payloadData.receipt.status)
