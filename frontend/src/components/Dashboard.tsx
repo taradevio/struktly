@@ -179,7 +179,7 @@ const UserDashboard = () => {
     useState<TelegramUser | null>(null);
   const [photoUrl, SetPhotoUrl] = useState<string | null>(null);
   const [focusedData, setFocusedData] = useState<{
-    week: string;
+    day: string;
     spending: number | null;
     budget: number;
     predicted: number | null;
@@ -291,62 +291,52 @@ const UserDashboard = () => {
 
   // Memoize chart data aggregation to avoid unnecessary re-renders
   const chartData = useMemo(() => {
-    if (!receiptsData?.receipts) {
-      return [
-        { week: "Week 1", spending: 0, budget: 750, predicted: null },
-        { week: "Week 2", spending: 0, budget: 750, predicted: null },
-        { week: "Week 3", spending: 0, budget: 750, predicted: null },
-        { week: "Week 4", spending: 0, budget: 750, predicted: null },
-      ];
-    }
-
+    // Get current week (Monday to Sunday)
     const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const WEEKLY_BUDGET = 750;
-
-    const weeklyData: Record<
+    const dayOfWeek = now.getDay();
+    const diff = now.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1); // Adjust for Sunday
+    const weekStart = new Date(now.getFullYear(), now.getMonth(), diff);
+    
+    const daysOfWeek = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    
+    // Initialize 7 days with 0 spending
+    const dailyData: Record<
       number,
-      { week: string; spending: number; budget: number; predicted: number | null }
+      { day: string; spending: number; budget: number; predicted: number | null }
     > = {};
-
-    receiptsData.receipts.forEach((receipt: any) => {
-      const date = new Date(receipt.transaction_date);
-
-      // Only include receipts from current month
-      if (date < monthStart) return;
-
-      const weekNumber = Math.floor(
-        (date.getDate() - date.getDay() + 6) / 7
-      );
-      const weekKey = weekNumber;
-
-      if (!weeklyData[weekKey]) {
-        weeklyData[weekKey] = {
-          week: `Week ${weekKey + 1}`,
-          spending: 0,
-          budget: WEEKLY_BUDGET,
-          predicted: null,
-        };
-      }
-
-      weeklyData[weekKey].spending += receipt.total_amount || 0;
-    });
-
-    // Calculate predictions for last week
-    const weeks = Object.values(weeklyData).sort((a, b) => {
-      const aNum = parseInt(a.week.split(" ")[1]);
-      const bNum = parseInt(b.week.split(" ")[1]);
-      return aNum - bNum;
-    });
-
-    if (weeks.length >= 2) {
-      const lastWeek = weeks[weeks.length - 1];
-      const prevWeek = weeks[weeks.length - 2];
-      const avgSpending = (lastWeek.spending + prevWeek.spending) / 2;
-      lastWeek.predicted = Math.round(avgSpending);
+    
+    for (let i = 0; i < 7; i++) {
+      const dateKey = i;
+      dailyData[dateKey] = {
+        day: daysOfWeek[i],
+        spending: 0,
+        budget: 107, // Weekly budget 750 / 7 days ≈ 107 per day
+        predicted: null,
+      };
     }
 
-    return weeks;
+    if (!receiptsData?.receipts || receiptsData.receipts.length === 0) {
+      return Object.values(dailyData);
+    }
+
+    // Aggregate receipts by day of current week
+    receiptsData.receipts.forEach((receipt: any) => {
+      const receiptDate = new Date(receipt.transaction_date);
+      
+      // Only include receipts from current week
+      if (receiptDate < weekStart) return;
+      
+      const nextWeekStart = new Date(weekStart);
+      nextWeekStart.setDate(nextWeekStart.getDate() + 7);
+      if (receiptDate >= nextWeekStart) return;
+      
+      // Get day index (0 = Monday, 6 = Sunday)
+      const dayIndex = (receiptDate.getDay() + 6) % 7;
+      
+      dailyData[dayIndex].spending += receipt.total_amount || 0;
+    });
+
+    return Object.values(dailyData);
   }, [receiptsData]);
 
   // Calculate stats from receipts data
@@ -631,18 +621,18 @@ const UserDashboard = () => {
                         }`}
                       >
                         <span className="font-semibold mr-1">
-                          {focusedData.week}
+                          {focusedData.day}
                         </span>
                         <span className="mx-1">
-                          Actual: Rp{focusedData.spending ?? "-"}
+                          Spending: {formattedRupiah(focusedData.spending ?? 0)}
                         </span>
                         <span className="mx-1 opacity-70">
-                          / Budget: ${focusedData.budget}
+                          / Daily Limit: {formattedRupiah(focusedData.budget)}
                         </span>
                       </Badge>
                     ) : (
                       <Badge className="bg-blue-500 text-white text-xs px-2 py-0.5 rounded-full">
-                        +12% vs Oct
+                        This Week
                       </Badge>
                     )}
                   </div>
@@ -693,7 +683,7 @@ const UserDashboard = () => {
                           </linearGradient>
                         </defs>
                         <XAxis
-                          dataKey="week"
+                          dataKey="day"
                           axisLine={false}
                           tickLine={false}
                           tick={{ fill: "#9ca3af", fontSize: 12 }}
