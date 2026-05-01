@@ -341,11 +341,10 @@ const UserDashboard = () => {
 
   // Calculate stats from receipts data
   const stats = useMemo(() => {
-    if (!receiptsData?.receipts) {
-      return {
-        weeklyTotal: 0,
-      };
-    }
+    let weeklyTotal = chartData.reduce(
+    (sum, day) => sum + day.spending,
+    0
+  );
 
     const now = new Date();
     const dayOfWeek = now.getDay();
@@ -354,7 +353,7 @@ const UserDashboard = () => {
     const weekEnd = new Date(weekStart);
     weekEnd.setDate(weekEnd.getDate() + 7);
 
-    let weeklyTotal = 0;
+    // let weeklyTotal = 0;
 
     receiptsData.receipts.forEach((receipt: any) => {
       const date = new Date(receipt.transaction_date);
@@ -367,7 +366,7 @@ const UserDashboard = () => {
     return {
       weeklyTotal,
     };
-  }, [receiptsData]);
+  }, [chartData]);
 
   // const groupedStores = useMemo(() => {
   //   const storeMap = userReceipts.reduce((acc, item) => {
