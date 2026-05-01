@@ -10,7 +10,7 @@ import { setToken, getToken } from "@/lib/auth";
 // import { transformCategoryData } from "@/utils/categoryHelpers";
 
 // import { useQuery } from "@tanstack/react-query";
-import { Bell, TrendingUp } from "lucide-react";
+import { Bell } from "lucide-react";
 import { Card, CardContent } from "./ui/card";
 // import { Input } from "./ui/input";
 import { Button } from "./ui/button";
@@ -343,43 +343,29 @@ const UserDashboard = () => {
   const stats = useMemo(() => {
     if (!receiptsData?.receipts) {
       return {
-        currentMonthTotal: 0,
-        previousMonthTotal: 0,
-        monthOverMonthChange: 0,
-        spendingDifference: 0,
+        weeklyTotal: 0,
       };
     }
 
     const now = new Date();
-    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const previousMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+    const dayOfWeek = now.getDay();
+    const diff = now.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1); // Adjust for Sunday
+    const weekStart = new Date(now.getFullYear(), now.getMonth(), diff);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate() + 7);
 
-    let currentMonthTotal = 0;
-    let previousMonthTotal = 0;
+    let weeklyTotal = 0;
 
     receiptsData.receipts.forEach((receipt: any) => {
       const date = new Date(receipt.transaction_date);
 
-      if (date >= currentMonthStart) {
-        currentMonthTotal += receipt.total_amount || 0;
-      } else if (date >= previousMonthStart && date <= previousMonthEnd) {
-        previousMonthTotal += receipt.total_amount || 0;
+      if (date >= weekStart && date < weekEnd) {
+        weeklyTotal += receipt.total_amount || 0;
       }
     });
 
-    const monthOverMonthChange =
-      previousMonthTotal > 0
-        ? ((currentMonthTotal - previousMonthTotal) / previousMonthTotal) * 100
-        : 0;
-
-    const spendingDifference = currentMonthTotal - previousMonthTotal;
-
     return {
-      currentMonthTotal,
-      previousMonthTotal,
-      monthOverMonthChange,
-      spendingDifference,
+      weeklyTotal,
     };
   }, [receiptsData]);
 
@@ -545,66 +531,10 @@ const UserDashboard = () => {
             ) : (
               <>
                 {/* Stats Header */}
-                <div className="flex items-start justify-between mb-4">
-                  <div>
-                    <p className="text-xs text-gray-300 mb-1">
-                      Month over Month
-                    </p>
-                    <div className="flex items-baseline gap-2">
-                      <span
-                        className={`text-2xl font-bold ${
-                          stats.monthOverMonthChange >= 0
-                            ? "text-red-400"
-                            : "text-green-400"
-                        }`}
-                      >
-                        {stats.monthOverMonthChange >= 0 ? "+" : ""}
-                        {stats.monthOverMonthChange.toFixed(1)}%
-                      </span>
-                      <span className="text-sm text-gray-300">
-                        vs last month
-                      </span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs text-gray-300 mb-1">Total Spent</p>
-                    <span className="text-2xl font-bold">
-                      {formattedRupiah(stats.currentMonthTotal)}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Spending Info */}
-                <div className="flex items-center gap-2 mb-6 bg-[#232d38] rounded-lg px-3 py-2">
-                  <div
-                    className={`p-1.5 rounded-lg ${
-                      stats.spendingDifference > 0
-                        ? "bg-red-500/20"
-                        : "bg-green-500/20"
-                    }`}
-                  >
-                    <TrendingUp
-                      className={`h-4 w-4 ${
-                        stats.spendingDifference > 0
-                          ? "text-red-400"
-                          : "text-green-400"
-                      }`}
-                    />
-                  </div>
-                  <p className="text-sm text-gray-300">
-                    Your spending is{" "}
-                    <span
-                      className={`font-medium ${
-                        stats.spendingDifference > 0
-                          ? "text-red-400"
-                          : "text-green-400"
-                      }`}
-                    >
-                      {stats.spendingDifference > 0 ? "+" : ""}
-                      {formattedRupiah(Math.abs(stats.spendingDifference))}
-                    </span>{" "}
-                    {stats.spendingDifference > 0 ? "higher" : "lower"} than
-                    the same time last month.
+                <div className="mb-6 bg-[#232d38] rounded-lg px-4 py-3">
+                  <p className="text-xs text-gray-300 mb-2">This Week's Spending</p>
+                  <p className="text-2xl font-bold text-blue-400">
+                    {formattedRupiah(stats.weeklyTotal)}
                   </p>
                 </div>
 
@@ -613,21 +543,12 @@ const UserDashboard = () => {
                   {/* Fixed Header Tooltip / Info Bar */}
                   <div className="absolute top-7.5 left-0 right-0 flex justify-center z-10 h-8">
                     {focusedData ? (
-                      <Badge
-                        className={`text-xs px-3 py-1 rounded-full transition-colors duration-200 ${
-                          (focusedData.spending || 0) > focusedData.budget
-                            ? "bg-red-500/20 text-red-400 border border-red-500/50"
-                            : "bg-blue-500 text-white"
-                        }`}
-                      >
-                        <span className="font-semibold mr-1">
+                      <Badge className="bg-blue-500 text-white text-xs px-3 py-1 rounded-full">
+                        <span className="font-semibold mr-2">
                           {focusedData.day}
                         </span>
-                        <span className="mx-1">
-                          Spending: {formattedRupiah(focusedData.spending ?? 0)}
-                        </span>
-                        <span className="mx-1 opacity-70">
-                          / Daily Limit: {formattedRupiah(focusedData.budget)}
+                        <span>
+                          {formattedRupiah(focusedData.spending ?? 0)}
                         </span>
                       </Badge>
                     ) : (
