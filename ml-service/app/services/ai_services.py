@@ -653,7 +653,7 @@ async def refine_receipt(raw_text: str, ocr_boxes: list = None):
         "receipt_id": "{receipt_id}",
         "merchant_name": {{"value": "string"}},
         "date": {{"value": "YYYY-MM-DD or null"}},
-        "receipt_time": {{"value": "HH:MM or null"}},
+        "time": {{"value": "HH:MM or null"}},
         "items": [{{
         "name": {{"value": "string"}},
         "qty": {{"value": int}},

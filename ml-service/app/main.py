@@ -32,7 +32,7 @@ class ReceiptData(BaseModel):
     items: list
     date: str
     price: float
-    receipt_time: str
+    time: str
     total_amount: float
     category: str
     status: str
