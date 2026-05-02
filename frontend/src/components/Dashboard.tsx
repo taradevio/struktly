@@ -194,23 +194,23 @@ const UserDashboard = () => {
     const diff = now.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1); // Adjust for Sunday
     const weekStart = new Date(now.getFullYear(), now.getMonth(), diff);
     
-    // const daysOfWeek = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    const daysOfWeek = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
     
     // Initialize 7 days with 0 spending
     const dailyData: Record<
       number,
-      { day: string; spending: number; budget: number; predicted: number | null }
+      { day: string; spending: number; predicted: number | null }
     > = {};
     
-    // for (let i = 0; i < 7; i++) {
-    //   const dateKey = i;
-    //   dailyData[dateKey] = {
-    //     day: daysOfWeek[i],
-    //     spending: 0,
-    //     budget: 107,
-    //     predicted: null,
-    //   };
-    // }
+    for (let i = 0; i < 7; i++) {
+      const dateKey = i;
+      dailyData[dateKey] = {
+        day: daysOfWeek[i],
+        spending: 0,
+        // budget: 107,
+        predicted: null,
+      };
+    }
 
     if (!receiptsData?.receipts || receiptsData.receipts.length === 0) {
       return Object.values(dailyData);
