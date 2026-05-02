@@ -16,7 +16,7 @@ import { Card, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
 // import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { Badge } from "./ui/badge";
-import { Progress } from "./ui/progress";
+// import { Progress } from "./ui/progress";
 import { Skeleton } from "./ui/skeleton";
 import {
   Area,
@@ -90,14 +90,6 @@ const queryClient = new QueryClient();
 //     isUp: true,
 //   },
 // ];
-
-// Budget data
-const budgetData = {
-  monthly: 3000,
-  spent: 2450,
-  remaining: 550,
-  percentage: 81.7,
-};
 
 // Category spending data
 // const categoryData = [
@@ -341,10 +333,11 @@ const UserDashboard = () => {
 
   // Calculate stats from receipts data
   const stats = useMemo(() => {
-    let weeklyTotal = chartData.reduce(
-    (sum, day) => sum + day.spending,
-    0
-  );
+    if (!receiptsData?.receipts) {
+      return {
+        weeklyTotal: 0,
+      };
+    }
 
     const now = new Date();
     const dayOfWeek = now.getDay();
@@ -353,7 +346,7 @@ const UserDashboard = () => {
     const weekEnd = new Date(weekStart);
     weekEnd.setDate(weekEnd.getDate() + 7);
 
-    // let weeklyTotal = 0;
+    let weeklyTotal = 0;
 
     receiptsData.receipts.forEach((receipt: any) => {
       const date = new Date(receipt.transaction_date);
@@ -366,7 +359,7 @@ const UserDashboard = () => {
     return {
       weeklyTotal,
     };
-  }, [chartData]);
+  }, [receiptsData]);
 
   // const groupedStores = useMemo(() => {
   //   const storeMap = userReceipts.reduce((acc, item) => {
@@ -658,56 +651,7 @@ const UserDashboard = () => {
       </div>
 
       {/* Budget Progress */}
-      <div className="px-4 pb-4">
-        <Card className="bg-[#1a2129] border-none rounded-2xl text-white">
-          <CardContent className="p-5">
-            {isLoading ? (
-              <div className="space-y-3">
-                <div className="flex justify-between">
-                  <Skeleton className="h-4 w-24 bg-gray-700" />
-                  <Skeleton className="h-6 w-20 bg-gray-700" />
-                </div>
-                <Skeleton className="h-3 w-full bg-gray-700" />
-                <div className="flex justify-between">
-                  <Skeleton className="h-4 w-20 bg-gray-700" />
-                  <Skeleton className="h-4 w-20 bg-gray-700" />
-                </div>
-              </div>
-            ) : (
-              <>
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-medium text-gray-300">
-                    Monthly Budget
-                  </h3>
-                  <span className="text-lg font-bold">
-                    ${budgetData.monthly.toLocaleString()}
-                  </span>
-                </div>
-                <div className="relative mb-3">
-                  <Progress
-                    value={budgetData.percentage}
-                    className="h-3 bg-gray-700"
-                  />
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-300">
-                    <span className="font-semibold text-white">
-                      ${budgetData.spent.toLocaleString()}
-                    </span>{" "}
-                    spent
-                  </span>
-                  <span className="text-gray-300">
-                    <span className="font-semibold text-green-400">
-                      ${budgetData.remaining.toLocaleString()}
-                    </span>{" "}
-                    remaining
-                  </span>
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+      
 
       {/* Category Breakdown */}
       <div className="px-4 pb-4">
