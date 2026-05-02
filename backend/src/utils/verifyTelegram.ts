@@ -1,4 +1,4 @@
-// utils.ts - pure Web Crypto, works di semua edge runtime
+// utils.ts
 export async function verifyTelegramHash(initData: string, botToken: string): Promise<boolean> {
   const params = new URLSearchParams(initData)
   const hash = params.get('hash')
