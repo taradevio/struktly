@@ -58,101 +58,6 @@ interface UserReceipts {
 
 const queryClient = new QueryClient();
 
-// const storeData = [
-//   {
-//     id: 1,
-//     name: "Walmart",
-//     logo: "W",
-//     bgColor: "bg-green-600",
-//     transactions: 8,
-//     amount: 432.5,
-//     change: 12.5,
-//     isUp: true,
-//   },
-//   {
-//     id: 2,
-//     name: "Amazon",
-//     logo: "a",
-//     bgColor: "bg-gradient-to-br from-gray-800 to-yellow-600",
-//     transactions: 14,
-//     amount: 289.9,
-//     change: 3.2,
-//     isUp: false,
-//   },
-//   {
-//     id: 3,
-//     name: "Target",
-//     logo: "◎",
-//     bgColor: "bg-red-600",
-//     transactions: 3,
-//     amount: 145.2,
-//     change: 8.4,
-//     isUp: true,
-//   },
-// ];
-
-// Category spending data
-// const categoryData = [
-//   {
-//     id: 1,
-//     name: "Food & Dining",
-//     icon: "🍔",
-//     amount: 820.5,
-//     percentage: 33.5,
-//     color: "bg-orange-500",
-//   },
-//   {
-//     id: 2,
-//     name: "Transport",
-//     icon: "🚗",
-//     amount: 450.0,
-//     percentage: 18.4,
-//     color: "bg-blue-500",
-//   },
-//   {
-//     id: 3,
-//     name: "Entertainment",
-//     icon: "🎮",
-//     amount: 380.0,
-//     percentage: 15.5,
-//     color: "bg-purple-500",
-//   },
-//   {
-//     id: 4,
-//     name: "Shopping",
-//     icon: "🛍️",
-//     amount: 520.0,
-//     percentage: 21.2,
-//     color: "bg-pink-500",
-//   },
-//   {
-//     id: 5,
-//     name: "Bills & Utilities",
-//     icon: "💡",
-//     amount: 279.5,
-//     percentage: 11.4,
-//     color: "bg-green-500",
-//   },
-// ];
-
-// const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
-
-// const fetchUserData = async () => {
-//   const response = await fetch(`${BACKEND_URL}/api/user-data`, {
-//     method: "GET",
-//     headers: {
-//       "Content-Type": "application/json",
-//       credentials: "include",
-//     },
-//   });
-
-//   if (!response.ok) {
-//     throw new Error("Failed to fetch user data");
-//   }
-
-//   return response.json();
-// };
-
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 
 export const Dashboard = () => {
@@ -289,7 +194,7 @@ const UserDashboard = () => {
     const diff = now.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1); // Adjust for Sunday
     const weekStart = new Date(now.getFullYear(), now.getMonth(), diff);
     
-    const daysOfWeek = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    // const daysOfWeek = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
     
     // Initialize 7 days with 0 spending
     const dailyData: Record<
@@ -297,15 +202,15 @@ const UserDashboard = () => {
       { day: string; spending: number; budget: number; predicted: number | null }
     > = {};
     
-    for (let i = 0; i < 7; i++) {
-      const dateKey = i;
-      dailyData[dateKey] = {
-        day: daysOfWeek[i],
-        spending: 0,
-        budget: 107, // Weekly budget 750 / 7 days ≈ 107 per day
-        predicted: null,
-      };
-    }
+    // for (let i = 0; i < 7; i++) {
+    //   const dateKey = i;
+    //   dailyData[dateKey] = {
+    //     day: daysOfWeek[i],
+    //     spending: 0,
+    //     budget: 107,
+    //     predicted: null,
+    //   };
+    // }
 
     if (!receiptsData?.receipts || receiptsData.receipts.length === 0) {
       return Object.values(dailyData);
