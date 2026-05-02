@@ -10,7 +10,7 @@ import { setToken, getToken } from "@/lib/auth";
 // import { transformCategoryData } from "@/utils/categoryHelpers";
 
 // import { useQuery } from "@tanstack/react-query";
-import { Bell } from "lucide-react";
+// import { Bell } from "lucide-react";
 import { Card, CardContent } from "./ui/card";
 // import { Input } from "./ui/input";
 import { Button } from "./ui/button";
@@ -151,15 +151,9 @@ const UserDashboard = () => {
       setTelegramUserProfile(data.userProfile);
       setUserReceiptsItem(data.userReceipts);
 
-      (async () => {
-        try {
-          await setToken(data.accessToken);
-        } catch (error) {
-          console.error("Token set error:", error);
-        }
-      })();
-      // setTelegramUser(data.userReceipts);
-      // Debug: userReceipts query data loaded
+      setToken(data.accessToken).catch((error) => {
+        console.error("Token set error:", error);
+      });
     }
   }, [data]);
 
@@ -302,7 +296,7 @@ const UserDashboard = () => {
 
         acc[key].transaction_count += 1;
         acc[key].total_amount += receipt.total_amount;
-        acc[key].receipts.push(receipt); // optional, kalo lo mau drill down nanti
+        acc[key].receipts.push(receipt); // optional, kalo mau drill down nanti
 
         return acc;
       },
@@ -379,38 +373,15 @@ const UserDashboard = () => {
           >
             <Search className="h-5 w-5" />
           </Button> */}
-          <Button
+          {/* <Button
             variant="ghost"
             size="icon"
             className="text-gray-300 hover:text-white"
           >
             <Bell className="h-5 w-5" />
-          </Button>
+          </Button> */}
         </div>
       </div>
-
-      {/* Collapsible Search Bar */}
-      {/* {searchOpen && (
-        <div className="px-4 pb-4 animate-in slide-in-from-top-2 duration-200">
-          <div className="relative flex items-center">
-            <Search className="absolute left-3 h-4 w-4 text-gray-400" />
-            <Input
-              type="text"
-              placeholder="Search transactions..."
-              className="w-full bg-[#1a2129] border-none pl-10 pr-12 py-5 rounded-xl text-gray-200 placeholder:text-gray-400"
-              autoFocus
-            />
-            <Button
-              variant="ghost"
-              size="icon"
-              className="absolute right-2 text-gray-300"
-              onClick={() => setSearchOpen(false)}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      )} */}
 
       {/* Stats Card */}
       <div className="px-4 pb-4">
