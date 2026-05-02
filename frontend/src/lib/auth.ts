@@ -19,8 +19,8 @@ export const getToken = async (): Promise<string | null> => {
   if (_accessToken) return _accessToken;
   const stored = sessionStorage.getItem("access_token");
   if (stored) {
-    _accessToken = stored;
     const decrypted = await decrypt(stored)
+    _accessToken = decrypted;
     return decrypted;
   }
   return null;
