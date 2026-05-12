@@ -635,6 +635,9 @@ async def refine_receipt(raw_text: str, ocr_boxes: list = None):
         Input: "DISKON | (4,700)"
         Output: discount_value=4700, assign ke item di atasnya
 
+        Input: "DISC | -200"
+        Output: discount_value=4700, assign ke item di atasnya
+
         Input: "26.03. 26-12:09/4.1.10/F0IH-72314/AMEL1/02"
         Output: date="2026-03-26", time="12:09"
 
