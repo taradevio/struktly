@@ -75,20 +75,20 @@ app.post("/process-receipt", async (c) => {
     // Normalize time format - add leading zeros if needed
     const normalizeTime = (time: string): string => {
       if (!time) return "00:00:00";
-      
+
       // Remove any spaces and normalize separators (. or : both work)
       let normalized = time.trim().replace(/\./g, ":");
-      
+
       // Split by colon
-      const parts = normalized.split(":").map(p => p.trim());
-      
+      const parts = normalized.split(":").map((p) => p.trim());
+
       if (parts.length < 2) return "00:00:00";
-      
+
       // Add leading zeros to hours and minutes
       const hours = parts[0].padStart(2, "0");
       const minutes = parts[1].padStart(2, "0");
       const seconds = parts[2]?.padStart(2, "0") || "00";
-      
+
       return `${hours}:${minutes}:${seconds}`;
     };
 
@@ -96,10 +96,15 @@ app.post("/process-receipt", async (c) => {
     const isValidTime = /^\d{2}:\d{2}(:\d{2})?$/.test(normalizedTime);
     const safeTime = isValidTime ? normalizedTime : "00:00:00";
 
-    console.log("Final time used:", { original: timeStr, normalized: normalizedTime, safeTime, isValidTime });
+    console.log("Final time used:", {
+      original: timeStr,
+      normalized: normalizedTime,
+      safeTime,
+      isValidTime,
+    });
 
     const transactionDate = new Date(`${dateStr}T${safeTime}`).toISOString();
-    
+
     console.log("Final transaction_date ISO:", transactionDate);
 
     const statusValid = ["VERIFIED", "ACTION_REQUIRED", "FAILED"];
@@ -220,13 +225,18 @@ app.post(
 
     const { userData } = await c.req.json();
 
-    const isValid = verifyTelegramHash(userData, c.env.BOT_TOKEN);
+    const isValid = await verifyTelegramHash(userData, c.env.BOT_TOKEN);
     if (!isValid) return c.json({ error: "Invalid telegram hash" }, 403);
 
     const params = new URLSearchParams(userData);
     const userJson = params.get("user");
     const telegramUser = JSON.parse(userJson || "{}");
     const telegram_id = String(telegramUser.id);
+    const authDate = Number(params.get("auth_date"));
+    const now = Math.floor(Date.now() / 1000);
+    if (now - authDate > 60 * 5) {
+      return c.json({ error: "initData expired" }, 403);
+    }
 
     const { data: userProfile, error: userError } = await db
       .from("users")
