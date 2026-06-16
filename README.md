@@ -65,10 +65,11 @@ This project is using Cloudflare as the deployment, Supabase as the database, Te
 
 ## Features
 - Receipt History allowing users to see the receipts data
-- HITL (Human-In-The-Loop) enabling edit mode in the dashboard
+
 - Status System -> Verified, Action Required
 
 ## To-Do-List Features
 - Dashboard with graphs to track outcome / Analytics
+- HITL (Human-In-The-Loop) 
 - Category Breakdown
 
